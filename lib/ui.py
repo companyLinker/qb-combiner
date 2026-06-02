@@ -23,6 +23,11 @@ def hide_streamlit_elements():
         iframe[title="Manage app"] {display: none !important;}
         div[data-testid="stDecoration"] {display: none !important;}
         
+        /* Hide the bottom-left/bottom-right Streamlit Cloud creator avatar/profile */
+        div[class^="_profileContainer_"] {display: none !important;}
+        img[data-testid="appCreatorAvatar"] {display: none !important;}
+        a[href*="share.streamlit.io/user/"] {display: none !important;}
+        
         /* Adjust layout to remove top padding from header hiding */
         .block-container {
             padding-top: 2rem !important;
