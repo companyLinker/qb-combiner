@@ -330,15 +330,14 @@ def build_linked_workbook(
                 if row.role == "preloaded" and not overwrite_preloaded:
                     continue
 
-                # Resolve QB entity name from mapping
-                if entity_col_mapping is not None:
-                    qb_entity = entity_col_mapping.get(entity_header)
-                    if qb_entity is None:
-                        # Explicitly skipped or unmapped — leave cell untouched
-                        continue
-                else:
-                    # No mapping supplied: use header verbatim
-                    qb_entity = entity_header
+                # Resolve the matching QB entity and year filter using the smart resolver
+                qb_entity, resolved_year_filter = resolve_qb_source(
+                    ys, year_sheets, qb_data, entity_col_mapping, entity_header
+                )
+                
+                if qb_entity is None:
+                    # Skipped or not found: leave cell untouched
+                    continue
 
                 if qb_entity in entities:
                     idx = entities.index(qb_entity)
@@ -348,7 +347,7 @@ def build_linked_workbook(
                     continue
 
                 sheet_base = "BS Pivot" if ys.statement == "BS" else "P&L Pivot"
-                pivot_sheet_name = f"{sheet_base} {year_filter}"
+                pivot_sheet_name = f"{sheet_base} {resolved_year_filter}"
                 formula = f"=SUMIFS('{pivot_sheet_name}'!${col_letter}:${col_letter}, '{pivot_sheet_name}'!$C:$C, \"{matched_target}\")"
                 
                 cell.value = formula
@@ -367,3 +366,115 @@ def _is_cy_year(ys: YearSheet, all_sheets: List[YearSheet]) -> bool:
     if not years:
         return True
     return ys.year == max(years)
+
+
+def resolve_qb_source(
+    ys: YearSheet,
+    all_sheets: List[YearSheet],
+    qb_data: dict,
+    entity_col_mapping: Optional[dict],
+    entity_header: str,
+) -> Tuple[Optional[str], str]:
+    """Resolves the correct QB entity key and the year filter ('CY' or 'PY') for a given template column and sheet.
+
+    Returns:
+        (resolved_qb_entity_key, year_filter)
+    """
+    is_cy = _is_cy_year(ys, all_sheets)
+
+    # 1. Check manual mapping first
+    mapped_entity = None
+    if entity_col_mapping is not None:
+        if entity_header in entity_col_mapping:
+            mapped_entity = entity_col_mapping[entity_header]
+            if mapped_entity is None:
+                # Explicitly mapped to "Skip"
+                return None, "CY"
+
+    # 2. Extract metadata and clean names for all uploaded QB entities
+    candidates = []
+    for ent_key, info in qb_data.items():
+        # Detect year from period strings or filename
+        ent_year = None
+        for p in [info.get("pnl_period_cy"), info.get("bs_period_cy"), info.get("pnl_period"), info.get("bs_period")]:
+            if p:
+                p_str = str(p).strip()
+                m = re.search(r"\b(20\d{2})\b", p_str)
+                if m:
+                    ent_year = int(m.group(1))
+                    break
+                m2 = re.search(r"\b(\d{2})$", p_str)
+                if m2:
+                    val = int(m2.group(1))
+                    if 0 <= val <= 99:
+                        ent_year = 2000 + val if val < 50 else 1900 + val
+                        break
+                # Look for a 2 digit year with a preceding boundary, e.g. - 24, / 24, space 24
+                m3 = re.search(r"\b(\d{2})\b", p_str)
+                if m3:
+                    val = int(m3.group(1))
+                    if 15 <= val <= 35:
+                        ent_year = 2000 + val
+                        break
+        
+        if not ent_year:
+            m_fn = re.search(r"\b(20\d{2})\b", info.get("file", ""))
+            if m_fn:
+                ent_year = int(m_fn.group(1))
+            else:
+                m_fn2 = re.search(r"\b(\d{2})\b", info.get("file", ""))
+                if m_fn2:
+                    val = int(m_fn2.group(1))
+                    if 20 <= val <= 35:
+                        ent_year = 2000 + val
+
+        # Clean the name: normalize and strip any year numbers out
+        clean_ent = norm_label(ent_key)
+        clean_ent_no_year = clean_ent
+        if ent_year:
+            yr_str = str(ent_year)
+            yr_short = str(ent_year % 100)
+            clean_ent_no_year = re.sub(r"\b(" + yr_str + r"|" + yr_short + r")\b", "", clean_ent)
+            clean_ent_no_year = re.sub(r"[\s\-_]+", " ", clean_ent_no_year).strip()
+
+        candidates.append({
+            "key": ent_key,
+            "clean_name": clean_ent_no_year,
+            "year": ent_year,
+            "variant": info.get("variant", "single")
+        })
+
+    # If manual mapping is specified, find that entity key
+    if mapped_entity:
+        cand = next((c for c in candidates if c["key"] == mapped_entity), None)
+        if cand:
+            if cand["variant"] == "triple":
+                return cand["key"], ("CY" if is_cy else "PY")
+            else:
+                return cand["key"], "CY"
+
+    # Otherwise, auto-resolve by comparing normalized name with normalized header
+    clean_header = norm_label(entity_header)
+    
+    # Try exact match on clean name first
+    matches = [c for c in candidates if c["clean_name"] == clean_header or norm_label(c["key"]) == clean_header]
+    # Fallback to substring matching if needed
+    if not matches:
+        matches = [c for c in candidates if clean_header in c["clean_name"] or clean_header in norm_label(c["key"])]
+
+    if not matches:
+        return None, "CY"
+
+    # Case A: If one of the matching files is a multi-year (triple) file, use it
+    triple_match = next((c for c in matches if c["variant"] == "triple"), None)
+    if triple_match:
+        return triple_match["key"], ("CY" if is_cy else "PY")
+
+    # Case B: Match the single-year file that corresponds to the template sheet year
+    if ys.year is not None:
+        year_match = next((c for c in matches if c["year"] == ys.year), None)
+        if year_match:
+            return year_match["key"], "CY"
+
+    # Default fallback to first match
+    return matches[0]["key"], "CY"

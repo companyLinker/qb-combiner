@@ -103,7 +103,7 @@ st.divider()
 # ── Options ──────────────────────────────────────────────────────────────────
 overwrite = st.checkbox(
     "Overwrite preloaded values (historical year-sheets)",
-    value=False,
+    value=True,
     help="Multi-year templates often contain prior-year actuals as static numbers. "
          "Unchecked = preserve them; checked = recompute from QB.",
 )
