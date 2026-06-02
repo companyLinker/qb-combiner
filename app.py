@@ -10,6 +10,7 @@ Or with Docker:
 import streamlit as st
 from lib import db as dblib
 from lib import profiles as P
+from lib.ui import hide_streamlit_elements
 
 
 # ------------------------- Page config -------------------------
@@ -19,6 +20,7 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+hide_streamlit_elements()
 
 
 # ------------------------- Password gate -------------------------
