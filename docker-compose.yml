@@ -1,0 +1,29 @@
+services:
+  qb-combiner:
+    build: .
+    container_name: qb-combiner
+    restart: unless-stopped
+    depends_on:
+      - mongo
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./.streamlit/secrets.toml:/app/.streamlit/secrets.toml:ro
+    environment:
+      - STREAMLIT_SERVER_MAX_UPLOAD_SIZE=200
+      - MONGODB_URI=mongodb://mongo:27017
+      - MONGODB_DB=qb_combiner
+
+  mongo:
+    image: mongo:7.0
+    container_name: qb-combiner-mongo
+    restart: unless-stopped
+    volumes:
+      - mongo-data:/data/db
+    # Internal only — not exposed to the host. Reached at hostname `mongo` from the app.
+    # Uncomment to expose for admin tools:
+    # ports:
+    #   - "27017:27017"
+
+volumes:
+  mongo-data:
