@@ -315,6 +315,10 @@ def build_linked_workbook(
             if row.role not in ("data", "preloaded"):
                 continue
 
+            # First, clean/clear the existing values in all entity columns for this row
+            for col, entity_header in ys.entity_cols:
+                ws.cell(row=row.row_idx, column=col).value = None
+
             # Match this template label to a target_line
             matched_target = _resolve_row_to_target(row.label, targets)
             if not matched_target:
