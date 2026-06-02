@@ -8,10 +8,6 @@ from lib import db as dblib
 from lib.ui import hide_streamlit_elements
 
 
-if st.secrets.get("APP_PASSWORD", None) and not st.session_state.get("authed"):
-    st.warning("Please sign in from the home page first.")
-    st.stop()
-
 hide_streamlit_elements()
 
 st.title("💾 Step 4 — Generate Linked Workbook")

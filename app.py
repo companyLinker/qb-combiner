@@ -23,28 +23,7 @@ st.set_page_config(
 hide_streamlit_elements()
 
 
-# ------------------------- Password gate -------------------------
-def check_password():
-    expected = st.secrets.get("APP_PASSWORD", None) if hasattr(st, "secrets") else None
-    if not expected:
-        return True
-    if st.session_state.get("authed"):
-        return True
 
-    st.markdown("## 🔒 Sign in")
-    st.markdown("Enter the team password to use the QB Combiner.")
-    pw = st.text_input("Password", type="password", key="pw_input")
-    if st.button("Sign in", type="primary"):
-        if pw == expected:
-            st.session_state.authed = True
-            st.rerun()
-        else:
-            st.error("Incorrect password.")
-    return False
-
-
-if not check_password():
-    st.stop()
 
 
 # ------------------------- Landing -------------------------
