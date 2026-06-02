@@ -24,9 +24,12 @@ def hide_streamlit_elements():
         div[data-testid="stDecoration"] {display: none !important;}
         
         /* Hide the bottom-left/bottom-right Streamlit Cloud creator avatar/profile */
-        div[class^="_profileContainer_"] {display: none !important;}
+        div[class*="_profileContainer_"] {display: none !important; height: 0 !important; width: 0 !important; opacity: 0 !important; visibility: hidden !important;}
+        div[class*="_profilePreview_"] {display: none !important; height: 0 !important; width: 0 !important; opacity: 0 !important; visibility: hidden !important;}
+        img[class*="_profileImage_"] {display: none !important; height: 0 !important; width: 0 !important; opacity: 0 !important; visibility: hidden !important;}
         img[data-testid="appCreatorAvatar"] {display: none !important;}
-        a[href*="share.streamlit.io/user/"] {display: none !important;}
+        a[href*="share.streamlit.io"] {display: none !important;}
+        div.stApp [class*="_profile"] {display: none !important; height: 0 !important; width: 0 !important; opacity: 0 !important;}
         
         /* Adjust layout to remove top padding from header hiding */
         .block-container {

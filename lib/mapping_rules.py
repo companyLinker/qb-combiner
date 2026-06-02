@@ -51,12 +51,23 @@ def map_pnl(breadcrumb, label):
         if any(x in lbl_n for x in ["non taxable sales", "taxable sales",
                                     "delivery sales refund", "merchant card",
                                     "online sales", "delivery sale refund"]):
-            return "SALES :-", "auto"
+            return "RETAIL SALES", "auto"
     if "rebate" in lbl_n:
         return "Rebate Income", "auto"
     if "management fees" in lbl_n or "management fee" in lbl_n:
-        if "other income" in bc_n or "income" in bc_n.split(" > ")[-1].lower():
+        bc_parts = [p.strip().lower() for p in breadcrumb.split(" > ")]
+        is_income = False
+        for part in bc_parts:
+            if "other income" in part:
+                is_income = True
+            elif "income" in part and "expense" not in part:
+                is_income = True
+        if any("expense" in part for part in bc_parts):
+            is_income = False
+        if is_income:
             return "Management fees  Income", "auto"
+        else:
+            return " MANAGEMENT FEES", "auto"
     if "rental income" in lbl_n or ("rent" in lbl_n and "income" in lbl_n):
         return "Rental Income", "auto"
     if "erc" in lbl_n:
@@ -70,7 +81,7 @@ def map_pnl(breadcrumb, label):
     if "misc" in lbl_n and "income" in lbl_n:
         return "Rebate Income", "auto"
     if "interest" in lbl_n and "income" in lbl_n and "expense" not in lbl_n:
-        return "Rebate Income", "auto"
+        return "INTEREST INCOME", "auto"
 
     # ============ COGS ============
     if "franchise fees" in bc_n:
@@ -79,11 +90,11 @@ def map_pnl(breadcrumb, label):
 
     if "labor cost" in bc_n:
         if "regular hour" in lbl_n:
-            return "   REGULAR HOURS", "auto"
+            return " SALARIES & WAGES", "auto"
         if "ot hour" in lbl_n or "overtime" in lbl_n:
-            return "   OT HOURS", "auto"
+            return " SALARIES & WAGES", "auto"
         if lbl_n == "salary" or lbl_n.endswith(" salary") or lbl_n.startswith("salary"):
-            return "   SALARY", "auto"
+            return " SALARIES & WAGES", "auto"
         if "covid" in lbl_n:
             return "  COVID CARE", "auto"
         if "kitchen" in lbl_n:
@@ -116,7 +127,9 @@ def map_pnl(breadcrumb, label):
     if "insurance" in bc_n.lower():
         return " INSURANCE EXP & WORKERS COMP", "auto"
     if "occupancy" in bc_n:
-        if "rent" in bc_n.split(" > ")[-1].lower() or "rent" in lbl_n.split(" ")[0]:
+        bc_parts = [p.strip().lower() for p in breadcrumb.split(" > ")]
+        last_part = bc_parts[-1] if bc_parts else ""
+        if "rent" in last_part or "rent" in lbl_n:
             return " RENT ", "auto"
         if "repair" in bc_n or "repair" in lbl_n or "maint" in lbl_n:
             return " REPAIR & MAINT", "auto"
@@ -136,6 +149,14 @@ def map_pnl(breadcrumb, label):
     ]):
         if "income" not in bc_n and "income" not in lbl_n:
             return "DELIVERY CHARGES", "auto"
+
+    # Specific common operating expense items matching regardless of exact breadcrumb
+    if "digital transaction" in lbl_n or "ordering tech fee" in lbl_n or "guest care fee" in lbl_n:
+        return "POPEYES DIGITAL TRANSACTION FEE", "auto"
+    if "food" in lbl_n and "employee" in lbl_n:
+        return "FOOD FOR EMPLOYEES", "auto"
+    if "loan fee" in lbl_n or "loan fees" in lbl_n:
+        return "LOAN FEES", "auto"
 
     if "operating expenses" in bc_n.lower():
         if "credit card" in lbl_n or "merchant fee" in lbl_n or "guest care" in lbl_n:
@@ -172,8 +193,6 @@ def map_pnl(breadcrumb, label):
             return "   Advertising and Promotion", "auto"
         if "non recurring" in lbl_n:
             return "  Non recurring expenses", "auto"
-        if "food" in lbl_n and "employee" in lbl_n:
-            return "    MISC EXP", "auto"
         if "penalty" in lbl_n or "annual report" in lbl_n or "suspense" in lbl_n:
             return "    MISC EXP", "auto"
         if "misc" in lbl_n and "tax" not in lbl_n:
@@ -187,24 +206,20 @@ def map_pnl(breadcrumb, label):
             if "maryland" in lbl_n:
                 return "    -PROPERTY TAX-MARYLAND", "auto"
             return "     RE TAX AND PROPRTY TAX", "auto"
-        if "misc" in lbl_n:
-            return "    -MISC TAX", "auto"
+        if "annual report" in lbl_n or "filing fee" in lbl_n or "filing fees" in lbl_n or "nj" in lbl_n or "new jersey" in lbl_n:
+            return "STATE FILING FEES", "auto"
+        if "restaurant" in lbl_n or "misc" in lbl_n or "other" in lbl_n:
+            return "Misc Taxes", "auto"
         if "state" in lbl_n:
             return "     STATE TAXES", "auto"
         if "mercantile" in lbl_n or "local" in lbl_n or "bpt" in lbl_n or "school tax" in lbl_n:
             return "   LOCAL MERCANTILE TAX", "auto"
-        if "nj" in lbl_n or "new jersey" in lbl_n:
-            return "  NJ Filing fees", "auto"
         if "gross receipt" in lbl_n:
             return "    Gross receipt tax", "auto"
 
     # ============ INTEREST EXPENSES ============
-    if "interest" in bc_n.lower() and "expense" in bc_n.lower():
-        if "bank" in lbl_n:
-            return " BANK", "auto"
-        return " OTHER", "auto"
-    if "interest expenses" in lbl_n:
-        return " OTHER", "auto"
+    if ("interest" in bc_n.lower() and "expense" in bc_n.lower()) or "interest expenses" in lbl_n:
+        return "INTEREST EXPENSE", "auto"
 
     # ============ NON-CASH / OTHER ============
     if "depreciation" in lbl_n:
@@ -224,17 +239,18 @@ def map_bs(breadcrumb, label):
     """Return (target_line, confidence) for a Balance Sheet leaf account."""
     bc_n = norm(breadcrumb).lower()
     lbl_n = norm(label).lower()
+    full_n = f"{bc_n} {lbl_n}".strip()
 
     # ============ ASSETS ============
-    if "cash on hand and in bank" in bc_n or (
+    if "cash on hand and in bank" in full_n or (
         "cash" in lbl_n and ("hand" in lbl_n or "pnc" in lbl_n or "bank" in lbl_n or "checking" in lbl_n)
     ):
         return "  Cash on hand and in bank", "auto"
-    if "credit card receivable" in bc_n:
+    if "credit card receivable" in full_n or "credit card receivables" in full_n:
         return "  Credit card receivable", "auto"
-    if "delivery sale receivable" in bc_n or "delivery receivable" in bc_n:
+    if "delivery sale receivable" in full_n or "delivery receivable" in full_n or "delivery sale receivables" in full_n:
         return "  Receivable from Deliveries", "auto"
-    if any(x in bc_n for x in [
+    if any(x in full_n for x in [
         "due (to) from", "due to from", "due to due from",
         "due to from affiliate", "due to from affiliates",
         "due to rom affiliates"  # actual QB typo
@@ -242,7 +258,7 @@ def map_bs(breadcrumb, label):
         return "  Due from/(Due to) Affiliates", "auto"
     if "backup withholding" in lbl_n or "back up withholding" in lbl_n or "back up withholdng" in lbl_n:
         return "  IRS Back up withholding Recievable", "auto"
-    if "prepaid" in bc_n:
+    if "prepaid" in full_n:
         if "maryland" in lbl_n:
             return "    Maryland Tax", "auto"
         if "real estate" in lbl_n:
@@ -255,16 +271,18 @@ def map_bs(breadcrumb, label):
     if "gift card" in lbl_n:
         return "  Gift Card Receivables", "auto"
     if lbl_n == "exchange" or (
-        "exchange" in lbl_n and ("assets" in bc_n or "asset" in bc_n) and "liab" not in bc_n
+        "exchange" in lbl_n and ("assets" in full_n or "asset" in full_n) and "liab" not in full_n
     ):
         return "  Exchange", "auto"
     if "loan receivable" in lbl_n or "loan recievable" in lbl_n:
         return "  Loan receivable", "auto"
 
-    # ============ FIXED ASSETS ============
-    if "accumulated depreciation" in lbl_n:
+    # ============ FIXED ASSETS & INTANGIBLES ============
+    if "accumulated depreciation" in full_n or "acc deprec" in lbl_n:
         return "  Less: Accumulated depreciation", "auto"
-    if "fixed assets" in bc_n and "intangible" not in bc_n:
+    if "amortization" in full_n or "amortizatio" in full_n:
+        return "     Less: Accumulated Amortization", "auto"
+    if "fixed assets" in full_n and "intangible" not in full_n:
         return "  Equipments", "auto"
 
     # ============ INTANGIBLES ============
@@ -277,11 +295,9 @@ def map_bs(breadcrumb, label):
     if "organization" in lbl_n:
         return "     Organization expenses", "auto"
     if ("franchise" in lbl_n or "franchies" in lbl_n) and (
-        "asset" in bc_n or "intangible" in bc_n or "cost" in bc_n
+        "asset" in full_n or "intangible" in full_n or "cost" in full_n
     ):
         return "     Franchise fees", "auto"
-    if "accumulated amortization" in lbl_n:
-        return "     Less: Accumulated Amortization", "auto"
 
     # ============ OTHER ASSETS ============
     if "ascentium" in lbl_n:
@@ -323,6 +339,8 @@ def map_bs(breadcrumb, label):
         return "   Payroll taxes payable", "auto"
     if "payroll liabilities" in lbl_n:
         return "   Payroll taxes payable", "auto"
+    if "annual report" in lbl_n or "filing fee" in lbl_n or "filing fees" in lbl_n or "nj" in lbl_n or "new jersey" in lbl_n:
+        return "STATE FILING FEES", "auto"
     if "ppp" in lbl_n:
         return "  Loan payable-SBA PPP loan", "auto"
     if "eidl" in lbl_n:
@@ -337,8 +355,8 @@ def map_bs(breadcrumb, label):
         return "Loan Payable to Partners", "auto"
 
     # ============ EQUITY (Partner's Capital) ============
-    if "partner s capital" in bc_n or "partner capital" in bc_n or "partner's capital" in bc_n:
-        if "distribution" in bc_n or "distribution" in lbl_n:
+    if "partner s capital" in full_n or "partner capital" in full_n or "partner's capital" in full_n:
+        if "distribution" in full_n:
             return "Distribution paid to Partner", "auto"
         if "profit for the year" in lbl_n or "current year profit" in lbl_n or "net profit" in lbl_n:
             return "CURRENT YEAR PROFIT", "auto"
@@ -346,7 +364,7 @@ def map_bs(breadcrumb, label):
             return "ADDITIONAL CAPITAL", "auto"
         # Everything else under PARTNER'S CAPITAL rolls to opening balance
         return " Partner's capital-beging", "auto"
-    if "distribution" in bc_n.lower() or "distribution" in lbl_n:
+    if "distribution" in full_n:
         return "Distribution paid to Partner", "auto"
 
     return None, "REVIEW"

@@ -60,24 +60,167 @@ def fit(ws, widths):
         ws.column_dimensions[get_column_letter(i)].width = w
 
 
-def _best_template_row_for(target_line: str, candidates: List[str], threshold: int = 75) -> Optional[str]:
+SYNONYMS = {
+    "sales": ["sales", "retail sales", "food sales", "total sales", "ordinary income", "sales :-"],
+    "retail sales": ["sales", "retail sales", "food sales", "total sales", "ordinary income", "sales :-"],
+    "food sales": ["sales", "retail sales", "food sales", "total sales", "ordinary income", "sales :-"],
+    "sales :-": ["sales", "retail sales", "food sales", "total sales", "ordinary income", "sales :-"],
+    
+    "cash on hand and in bank": ["cash on hand and in bank", "cash on hand", "cash in bank", "cash on hand & in bank", "total cash & bank"],
+    "cash on hand": ["cash on hand and in bank", "cash on hand", "cash in bank", "cash on hand & in bank", "total cash & bank"],
+    "cash in bank": ["cash on hand and in bank", "cash on hand", "cash in bank", "cash on hand & in bank", "total cash & bank"],
+    
+    "receivable from deliveries": ["receivable from deliveries", "delivery sales receivable", "delivery receivable", "delivery sales  receivable", "delivery fees expense"],
+    "delivery sales  receivable": ["receivable from deliveries", "delivery sales receivable", "delivery receivable", "delivery sales  receivable", "delivery fees expense"],
+    
+    "due from/(due to) affiliates": ["due from/(due to) affiliates", "due from (to) affiliates", "due from/to affiliates", "due to from affiliates", "due from to affiliates"],
+    "due from (to) affiliates": ["due from/(due to) affiliates", "due from (to) affiliates", "due from/to affiliates", "due to from affiliates", "due from to affiliates"],
+    
+    "inventory": ["inventory", "ending inventory", "opening inventory"],
+    "ending inventory": ["inventory", "ending inventory", "less: inventory at 12/31/2023", "less: inventory"],
+    "opening inventory": ["inventory", "opening inventory", "opening inventory 01/01/2023"],
+    
+    "equipments": ["equipments", "equipment"],
+    "equipment": ["equipments", "equipment"],
+    
+    "leasehold improvemrnts": ["leasehold improvemrnts", "leasehold improvements", "leasehold imp", "leasehold improvement"],
+    "leasehold improvements": ["leasehold improvemrnts", "leasehold improvements", "leasehold imp", "leasehold improvement"],
+    "leasehold imp": ["leasehold improvemrnts", "leasehold improvements", "leasehold imp", "leasehold improvement"],
+    
+    "franchise & advt fees": ["franchise & advt fees", "total franchise fees", "franchise fees", "franchise fee"],
+    "total franchise fees": ["franchise & advt fees", "total franchise fees", "franchise fees", "franchise fee"],
+    "franchise fees": ["franchise & advt fees", "total franchise fees", "franchise fees", "franchise fee"],
+    
+    "restaurant supp": ["restaurant supp", "restaurant supplies", "restaurant supply"],
+    "restaurant supplies": ["restaurant supp", "restaurant supplies", "restaurant supply"],
+    
+    "uniform": ["uniform", "uniforms", "uniform "],
+    "uniforms": ["uniform", "uniforms", "uniform "],
+    
+    "delivery charges": ["delivery charges", "delivery fees expense", "delivery expense"],
+    "delivery fees expense": ["delivery charges", "delivery fees expense", "delivery expense"],
+    
+    "auto expense": ["auto expense", "auto expenses and travel", "auto expenses", "auto expense & travel", "auto and travel"],
+    "auto expenses and travel": ["auto expense", "auto expenses and travel", "auto expenses", "auto expense & travel", "auto and travel"],
+    
+    "cleaning exp": ["cleaning exp", "cleaning expenses", "cleaning expense"],
+    "cleaning expenses": ["cleaning exp", "cleaning expenses", "cleaning expense"],
+    
+    "insurance exp & workers comp": ["insurance exp & workers comp", "insurance & workers comp", "insurance exp", "insurance expense", "insurance"],
+    "insurance & workers comp": ["insurance exp & workers comp", "insurance & workers comp", "insurance exp", "insurance expense", "insurance"],
+    
+    "rent": ["rent", "rent & cam charges", "rent expense", "rent payable", "rent cam", "rent & cam"],
+    "rent & cam charges": ["rent", "rent & cam charges", "rent expense", "rent payable", "rent cam", "rent & cam"],
+    
+    "utilities": ["utilities", "utility", "utilities expense"],
+    
+    "repair & maint": ["repair & maint", "repairs and maintenance", "repair and maintenance", "repairs & maintenance", "repairs"],
+    "repairs and maintenance": ["repair & maint", "repairs and maintenance", "repair and maintenance", "repairs & maintenance", "repairs"],
+    
+    "credit card charges": ["credit card charges", "merchant fees", "merchant card charges"],
+    
+    "security and alarm": ["security and alarm", "alarm and security", "alarm & security", "security & alarm"],
+    "alarm and security": ["security and alarm", "alarm and security", "alarm & security", "security & alarm"],
+    
+    "licence and permits": ["licence and permits", "licenses and permits", "license and permits", "licenses & permits"],
+    "licenses and permits": ["licence and permits", "licenses and permits", "license and permits", "licenses & permits"],
+    
+    "office expenses": ["office expenses", "office supplies and expense", "office supplies", "office expense"],
+    "office supplies and expense": ["office expenses", "office supplies and expense", "office supplies", "office expense"],
+    
+    "payroll expense": ["payroll expense", "payroll processing", "payroll service fees", "payroll processing fees", "401(k) expenses", "401k expense", "401k expenses"],
+    "payroll processing": ["payroll expense", "payroll processing", "payroll service fees", "payroll processing fees", "401(k) expenses", "401k expense", "401k expenses"],
+    
+    "shortages": ["shortages", "shortages & overs", "shortage & over", "cash short/over"],
+    "shortages & overs": ["shortages", "shortages & overs", "shortage & over", "cash short/over"],
+    
+    "bonus": ["bonus", "bonus expsnse", "bonus expense"],
+    "bonus expsnse": ["bonus", "bonus expsnse", "bonus expense"],
+    
+    "misc exp": ["misc exp", "miscellaneous expenses", "miscellaneous expense", "misc expense"],
+    "miscellaneous expenses": ["misc exp", "miscellaneous expenses", "miscellaneous expense", "misc expense"],
+    
+    "regular hours": ["regular hours", "salaries & wages", "salaries and wages", "salary & wages", "wages", "salaries"],
+    "salary": ["salary", "salaries & wages", "salaries and wages", "salary & wages", "wages", "salaries"],
+    "ot hours": ["ot hours", "salaries & wages", "salaries and wages", "salary & wages", "wages", "salaries"],
+    "salaries & wages": ["regular hours", "salary", "ot hours", "salaries & wages", "salaries and wages", "salary & wages", "wages", "salaries"],
+
+    "profit transfer to ap north": ["profit transfer to ap north", "profit sharing expense", "profit sharing", "profit transfer"],
+    "misc taxes": ["misc taxes", "misc tax", "-misc tax", "local mercantile tax"],
+    "re tax and proprty tax": ["re tax and proprty tax", "real estate tax", "property tax", "re tax", "real estate  tax"],
+    "real estate  tax": ["re tax and proprty tax", "real estate tax", "property tax", "re tax", "real estate  tax"],
+    "payroll taxes payable": ["payroll taxes payable", "payroll liabilities"],
+    "payroll liabilities": ["payroll taxes payable", "payroll liabilities"],
+    "state filing fees": ["state filing fees", "state filing fees payable", "annual report fees", "filing fees", "filing fee"],
+    "state filing fees payable": ["state filing fees", "state filing fees payable", "annual report fees", "filing fees", "filing fee"],
+}
+
+# Pre-normalize the synonyms at runtime once
+NORM_SYNONYMS = {}
+for k, v in SYNONYMS.items():
+    kn = norm_label(k)
+    if not kn:
+        continue
+    vn_list = NORM_SYNONYMS.setdefault(kn, [])
+    for val in v:
+        vn = norm_label(val)
+        if vn and vn not in vn_list:
+            vn_list.append(vn)
+
+
+def _best_template_row_for(target_line: str, candidates: List[str], threshold: int = 70) -> Optional[str]:
     """Given a target_line (from the mapping rules), find the closest template
-    label among the candidates. Uses rapidfuzz when available; falls back to
-    exact-normalized equality."""
+    label among the candidates."""
     if not target_line or not candidates:
         return None
+
     tnorm = norm_label(target_line)
     if not tnorm:
         return None
+
     cand_norm = {norm_label(c): c for c in candidates}
+
+    # 1. Exact normalized match
     if tnorm in cand_norm:
         return cand_norm[tnorm]
+
+    # 2. Hardcoded synonyms / CPA common equivalents
+    if tnorm in NORM_SYNONYMS:
+        for syn_norm in NORM_SYNONYMS[tnorm]:
+            if syn_norm in cand_norm:
+                return cand_norm[syn_norm]
+
+    for cand_n, original_cand in cand_norm.items():
+        if cand_n in NORM_SYNONYMS:
+            if tnorm in NORM_SYNONYMS[cand_n]:
+                return original_cand
+
+    # 3. Substring matching (if one contains the other)
+    for cand_n, original_cand in cand_norm.items():
+        if len(cand_n) > 3 and len(tnorm) > 3:
+            if cand_n in tnorm or tnorm in cand_n:
+                return original_cand
+
+    # 4. Standard library difflib SequenceMatcher (always available fallback)
+    import difflib
+    best_ratio = 0
+    best_cand = None
+    for cand_n, original_cand in cand_norm.items():
+        ratio = difflib.SequenceMatcher(None, tnorm, cand_n).ratio()
+        if ratio > best_ratio:
+            best_ratio = ratio
+            best_cand = original_cand
+    if best_ratio >= 0.75:
+        return best_cand
+
+    # 5. Rapidfuzz if installed
     if HAVE_RAPIDFUZZ:
         best = rf_process.extractOne(tnorm, list(cand_norm.keys()),
                                       scorer=fuzz.token_set_ratio,
                                       score_cutoff=threshold)
         if best:
             return cand_norm[best[0]]
+
     return None
 
 
@@ -216,8 +359,10 @@ def _write_template_map_sheet(wb, year_sheets, mapping):
         for row in ys.rows:
             if row.role != "data":
                 continue
-            # Find which target_line(s) match this template label
-            matched = _best_template_row_for(row.label, list(by_target.keys()))
+            # Find which target_line(s) match this template label, filtered by statement type
+            stmt_key = "P&L" if ys.statement == "IS" else ys.statement
+            candidates = [tgt for tgt, qbs in by_target.items() if any(stmt == stmt_key for stmt, _, _ in qbs)]
+            matched = _best_template_row_for(row.label, candidates)
             qbs = by_target.get(matched, []) if matched else []
             qb_summary = "; ".join(f"{stmt}: {lbl}" for stmt, bc, lbl in qbs[:5])
             if len(qbs) > 5:
