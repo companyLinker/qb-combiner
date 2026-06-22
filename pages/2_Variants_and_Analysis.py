@@ -124,6 +124,17 @@ if db_online:
         active_profile      = P.get_profile(active_id)
         saved_lookup        = P.mapping_lookup(active_id)
         entity_saved_lookup = P.entity_mapping_lookup(active_id)
+        
+        # Load row pivot overrides from database if switched profile
+        if st.session_state.get("loaded_row_overrides_profile_id") != active_id:
+            db_ro = {}
+            for k, v in saved_lookup.items():
+                if k.startswith("__template_row_override__|"):
+                    parts = k.split("|", 2)
+                    if len(parts) == 3:
+                        db_ro[f"{parts[1]}|{parts[2]}"] = v
+            st.session_state.row_pivot_overrides = db_ro
+            st.session_state.loaded_row_overrides_profile_id = active_id
 
 if active_profile:
     st.caption(f"📂 Loaded from profile: **{active_profile['name']}** — "
@@ -308,6 +319,31 @@ if _target_bytes and _selected_sheets and _year_sheets_meta:
                             else:
                                 new_ro.pop(rk, None)
                         st.session_state.row_pivot_overrides = new_ro
+                        
+                        # Save to database immediately if profile is active and DB is online
+                        active_id = st.session_state.get("active_profile_id")
+                        if db_online and active_id:
+                            d = dblib.get_db()
+                            if d is not None:
+                                d.mappings.delete_many({
+                                    "profile_id": P.ObjectId(active_id),
+                                    "statement": "__template_row_override__"
+                                })
+                                for rk_db, val_db in new_ro.items():
+                                    if val_db:
+                                        parts = rk_db.split("|", 1)
+                                        if len(parts) == 2:
+                                            sheet_name, row_idx = parts[0], parts[1]
+                                            P.upsert_mapping(
+                                                profile_id=active_id,
+                                                statement="__template_row_override__",
+                                                breadcrumb=sheet_name,
+                                                qb_account=row_idx,
+                                                target_line=val_db,
+                                                source="manual",
+                                            )
+                                P._invalidate_mapping_cache(active_id)
+                        
                         st.success("✅ Row-level pivot overrides saved. Re-download to apply.")
                         st.rerun()
             else:
@@ -338,6 +374,8 @@ if _target_bytes and _selected_sheets:
             master_wb = openpyxl.load_workbook(io.BytesIO(master_buf.getvalue()))
             linked_wb = openpyxl.load_workbook(io.BytesIO(linked_buf.getvalue()), data_only=False)
             for sn in _selected_sheets:
+                if sn.lower().strip() in ("readme", "pl long", "bs long", "coa both p&l and bs"):
+                    continue
                 if sn in linked_wb.sheetnames:
                     copy_sheet_into_workbook(linked_wb, sn, master_wb)
             new_buf = io.BytesIO()
@@ -643,8 +681,33 @@ if st.session_state.get("v2_save_dialog_open"):
                                 pass
 
                 st.session_state.entity_mapping_overrides = new_ov
+                
+                # Save row-level pivot overrides
+                if db_online:
+                    d = dblib.get_db()
+                    if d is not None:
+                        d.mappings.delete_many({
+                            "profile_id": P.ObjectId(tid),
+                            "statement": "__template_row_override__"
+                        })
+                        for rk, val in st.session_state.get("row_pivot_overrides", {}).items():
+                            if val:
+                                parts = rk.split("|", 1)
+                                if len(parts) == 2:
+                                    sheet_name, row_idx = parts[0], parts[1]
+                                    P.upsert_mapping(
+                                        profile_id=tid,
+                                        statement="__template_row_override__",
+                                        breadcrumb=sheet_name,
+                                        qb_account=row_idx,
+                                        target_line=val,
+                                        source="manual",
+                                    )
+                        P._invalidate_mapping_cache(tid)
+                st.session_state.loaded_row_overrides_profile_id = tid
+
                 st.session_state.v2_save_dialog_open = False
-                st.success(f"✅ Saved {n} per-company mappings to profile **{tname}**.")
+                st.success(f"✅ Saved {n} per-company mappings and template row formula overrides to profile **{tname}**.")
                 st.rerun()
 
 st.divider()

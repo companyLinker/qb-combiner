@@ -26,6 +26,7 @@ target_bytes  = st.session_state.target_bytes
 profile_lookup = {}
 entity_lookup  = {}
 active_profile = None
+active_id = None
 if dblib.is_connected():
     active_id = st.session_state.get("active_profile_id")
     if active_id:
@@ -38,6 +39,18 @@ entity_session_overrides = st.session_state.get("entity_mapping_overrides", {})
 combined        = {**profile_lookup, **session_overrides}
 entity_combined = {**entity_lookup, **entity_session_overrides}
 
+# Load template row overrides from database profile and session
+row_overrides = {}
+if active_id:
+    for k, v in profile_lookup.items():
+        if k.startswith("__template_row_override__|"):
+            parts = k.split("|", 2)
+            if len(parts) == 3:
+                row_overrides[f"{parts[1]}|{parts[2]}"] = v
+
+session_ro = st.session_state.get("row_pivot_overrides", {})
+row_overrides.update(session_ro)
+
 # ── Template configuration from Upload Files page ────────────────────────────
 selected_sheets    = st.session_state.get("selected_template_sheets")
 entity_col_mapping = st.session_state.get("template_entity_mapping")
@@ -46,7 +59,8 @@ entity_col_mapping = st.session_state.get("template_entity_mapping")
 cols = st.columns(5)
 cols[0].metric("Entities",          len(qb_data))
 cols[1].metric("Profile",           active_profile["name"] if active_profile else "—")
-cols[2].metric("From profile",      len(profile_lookup))
+n_profile_maps = sum(1 for k in profile_lookup if not k.startswith("__template_row_override__|"))
+cols[2].metric("From profile",      n_profile_maps)
 cols[3].metric("Session overrides", len(session_overrides))
 cols[4].metric("Entity overrides",  len(entity_session_overrides))
 
@@ -119,6 +133,7 @@ if st.button("🚀 Generate Linked Workbook", type="primary"):
             overwrite_preloaded=overwrite,
             selected_sheets=selected_sheets or None,
             entity_col_mapping=entity_col_mapping or None,
+            row_pivot_overrides=row_overrides or None,
         )
     st.session_state.linked_buf          = buf.getvalue()
     st.session_state.linked_mapping      = mapping

@@ -185,7 +185,7 @@ if st.session_state.get("target_bytes"):
 
         default_selected = st.session_state.get(
             "selected_template_sheets",
-            [sn for sn in all_sheet_names if sn in classified],
+            [sn for sn in all_sheet_names if sn in classified and sn.lower().strip() not in ("readme", "pl long", "bs long", "coa both p&l and bs")],
         )
         # Validate defaults against current template
         default_selected = [s for s in default_selected if s in all_sheet_names]

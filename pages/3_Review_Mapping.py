@@ -70,6 +70,17 @@ if db_online:
         active_profile      = P.get_profile(active_id)
         saved_lookup        = P.mapping_lookup(active_id)
         entity_saved_lookup = P.entity_mapping_lookup(active_id)
+        
+        # Load row pivot overrides from database if switched profile
+        if st.session_state.get("loaded_row_overrides_profile_id") != active_id:
+            db_ro = {}
+            for k, v in saved_lookup.items():
+                if k.startswith("__template_row_override__|"):
+                    parts = k.split("|", 2)
+                    if len(parts) == 3:
+                        db_ro[f"{parts[1]}|{parts[2]}"] = v
+            st.session_state.row_pivot_overrides = db_ro
+            st.session_state.loaded_row_overrides_profile_id = active_id
 
 if active_profile:
     st.success(
@@ -355,8 +366,33 @@ if st.session_state.get("p3_save_dialog_open"):
                                 pass
 
                 st.session_state.entity_mapping_overrides = new_ov
+                
+                # Save row-level pivot overrides
+                if db_online:
+                    d = dblib.get_db()
+                    if d is not None:
+                        d.mappings.delete_many({
+                            "profile_id": P.ObjectId(tid),
+                            "statement": "__template_row_override__"
+                        })
+                        for rk, val in st.session_state.get("row_pivot_overrides", {}).items():
+                            if val:
+                                parts = rk.split("|", 1)
+                                if len(parts) == 2:
+                                    sheet_name, row_idx = parts[0], parts[1]
+                                    P.upsert_mapping(
+                                        profile_id=tid,
+                                        statement="__template_row_override__",
+                                        breadcrumb=sheet_name,
+                                        qb_account=row_idx,
+                                        target_line=val,
+                                        source="manual",
+                                    )
+                        P._invalidate_mapping_cache(tid)
+                st.session_state.loaded_row_overrides_profile_id = tid
+
                 st.session_state.p3_save_dialog_open = False
-                st.success(f"✅ Saved {n} overrides to profile **{tname}**.")
+                st.success(f"✅ Saved {n} overrides and template row formula overrides to profile **{tname}**.")
                 st.rerun()
 
 if template_loaded:

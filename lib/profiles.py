@@ -165,7 +165,10 @@ def mapping_count(profile_id: str) -> int:
     d = dblib.get_db()
     if d is None:
         return 0
-    return d.mappings.count_documents({"profile_id": ObjectId(profile_id)})
+    return d.mappings.count_documents({
+        "profile_id": ObjectId(profile_id),
+        "statement": {"$ne": "__template_row_override__"}
+    })
 
 
 # ---------------- Entity-specific Mappings ----------------
