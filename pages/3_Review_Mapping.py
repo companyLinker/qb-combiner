@@ -5,6 +5,7 @@ so the user explicitly picks (or creates) a profile every time.
 """
 
 import io
+import hashlib
 import streamlit as st
 import openpyxl
 import pandas as pd
@@ -13,6 +14,32 @@ from lib.template_discovery import discover_template
 from lib import profiles as P
 from lib import db as dblib
 from lib.ui import hide_streamlit_elements
+
+
+@st.cache_data(show_spinner=False, max_entries=4)
+def _cached_template_lines_p3(target_bytes_hash: str, _target_bytes: bytes):
+    """Discover P&L and BS target lines from template. Cached by content hash."""
+    pnl_lines: list = []
+    bs_lines: list  = []
+    try:
+        wb_tpl = openpyxl.load_workbook(io.BytesIO(_target_bytes), data_only=False)
+        year_sheets = discover_template(wb_tpl)
+        for stmt_key, is_pnl in [("IS", True), ("BS", False)]:
+            relevant = sorted([s for s in year_sheets if s.statement == stmt_key],
+                              key=lambda s: -(s.year or 0))
+            if not relevant:
+                continue
+            labels = [
+                r.label for r in relevant[0].rows
+                if r.role in ("data", "preloaded", "subtotal") and r.label.strip()
+            ]
+            if is_pnl:
+                pnl_lines = labels
+            else:
+                bs_lines = labels
+    except Exception:
+        pass
+    return pnl_lines, bs_lines
 
 
 hide_streamlit_elements()
@@ -64,24 +91,9 @@ template_loaded = bool(st.session_state.get("target_bytes"))
 
 if template_loaded:
     try:
-        wb_tpl = openpyxl.load_workbook(
-            io.BytesIO(st.session_state.target_bytes), data_only=False)
-        year_sheets = discover_template(wb_tpl)
-        for stmt in [("IS", "P&L"), ("BS", "BS")]:
-            stmt_key, _ = stmt
-            relevant = sorted([s for s in year_sheets if s.statement == stmt_key],
-                              key=lambda s: -(s.year or 0))
-            if not relevant:
-                continue
-            labels = [
-                r.label for r in relevant[0].rows
-                if r.role in ("data", "preloaded", "subtotal")
-                and r.label.strip()
-            ]
-            if stmt_key == "IS":
-                target_lines_pnl = labels
-            else:
-                target_lines_bs = labels
+        _tb = st.session_state.target_bytes
+        _tb_hash = hashlib.md5(_tb).hexdigest()
+        target_lines_pnl, target_lines_bs = _cached_template_lines_p3(_tb_hash, _tb)
         st.caption(
             f"✅ Template dropdowns: {len(target_lines_pnl)} P&L lines, "
             f"{len(target_lines_bs)} BS lines loaded."
@@ -89,7 +101,7 @@ if template_loaded:
     except Exception as e:
         st.warning(f"Could not read target template: {e}")
 else:
-    st.warning("⚠️ No target template uploaded — upload on **📂 Upload Files**.")
+    st.warning("⚠️ No target template uploaded — upload on **📂 Upload Files**.") 
 
 if target_lines_pnl or target_lines_bs:
     all_targets = sorted(set([""] + target_lines_pnl + target_lines_bs))

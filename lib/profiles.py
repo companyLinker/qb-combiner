@@ -6,9 +6,22 @@ them next year (or for another client) without redoing the review step.
 """
 
 import json
+import time
 from typing import Optional
 from bson.objectid import ObjectId
 from . import db as dblib
+
+# ── In-process mapping cache (invalidated on every write) ────────────────────
+# Key: profile_id str  →  (timestamp_float, dict)
+_MAPPING_CACHE: dict = {}
+_ENTITY_MAPPING_CACHE: dict = {}
+_CACHE_TTL_SECONDS = 60  # max staleness if another process wrote to Mongo
+
+
+def _invalidate_mapping_cache(profile_id: str):
+    """Call after any write so the next read is fresh from MongoDB."""
+    _MAPPING_CACHE.pop(profile_id, None)
+    _ENTITY_MAPPING_CACHE.pop(profile_id, None)
 
 
 def _ensure_db():
@@ -107,6 +120,7 @@ def upsert_mapping(profile_id: str, statement: str, breadcrumb: str,
         },
         upsert=True,
     )
+    _invalidate_mapping_cache(profile_id)
 
 
 def delete_mapping(profile_id: str, statement: str, breadcrumb: str, qb_account: str):
@@ -117,6 +131,7 @@ def delete_mapping(profile_id: str, statement: str, breadcrumb: str, qb_account:
         "breadcrumb": breadcrumb,
         "qb_account": qb_account,
     })
+    _invalidate_mapping_cache(profile_id)
 
 
 def list_mappings(profile_id: str):
@@ -128,11 +143,21 @@ def list_mappings(profile_id: str):
 
 def mapping_lookup(profile_id: str) -> dict:
     """Return a dict keyed by 'P&L|<bc>|<account>' → target_line for fast lookup.
-    This is the exact format consumed by linked_builder.compute_mapping()."""
+    Cached in-process with 60s TTL; invalidated on any write in this process."""
+    now = time.monotonic()
+    cached = _MAPPING_CACHE.get(profile_id)
+    if cached and (now - cached[0]) < _CACHE_TTL_SECONDS:
+        return cached[1]
     out = {}
     for m in list_mappings(profile_id):
-        key = f"{m['statement']}|{m['breadcrumb']}|{m['qb_account']}"
-        out[key] = m["target_line"]
+        stmt = m.get("statement")
+        bc = m.get("breadcrumb", "")
+        qb_acc = m.get("qb_account")
+        target_line = m.get("target_line")
+        if stmt and qb_acc and target_line is not None:
+            key = f"{stmt}|{bc}|{qb_acc}"
+            out[key] = target_line
+    _MAPPING_CACHE[profile_id] = (now, out)
     return out
 
 
@@ -170,6 +195,7 @@ def upsert_entity_mapping(profile_id: str, entity: str, statement: str,
         }},
         upsert=True,
     )
+    _invalidate_mapping_cache(profile_id)
 
 
 def delete_entity_mapping(profile_id: str, entity: str, statement: str,
@@ -182,17 +208,30 @@ def delete_entity_mapping(profile_id: str, entity: str, statement: str,
         "breadcrumb": breadcrumb,
         "qb_account": qb_account,
     })
+    _invalidate_mapping_cache(profile_id)
 
 
 def entity_mapping_lookup(profile_id: str) -> dict:
-    """Return dict keyed by 'E|{stmt}|{entity}|{bc}|{lbl}' → target_line."""
+    """Return dict keyed by 'E|{stmt}|{entity}|{bc}|{lbl}' → target_line.
+    Cached in-process with 60s TTL; invalidated on any write in this process."""
+    now = time.monotonic()
+    cached = _ENTITY_MAPPING_CACHE.get(profile_id)
+    if cached and (now - cached[0]) < _CACHE_TTL_SECONDS:
+        return cached[1]
     d = dblib.get_db()
     if d is None:
         return {}
     out = {}
     for m in d.entity_mappings.find({"profile_id": ObjectId(profile_id)}):
-        key = f"{ENTITY_KEY_PREFIX}{m['statement']}|{m['entity']}|{m['breadcrumb']}|{m['qb_account']}"
-        out[key] = m["target_line"]
+        stmt = m.get("statement")
+        ent = m.get("entity")
+        bc = m.get("breadcrumb", "")
+        qb_acc = m.get("qb_account")
+        target_line = m.get("target_line")
+        if stmt and ent and qb_acc and target_line is not None:
+            key = f"{ENTITY_KEY_PREFIX}{stmt}|{ent}|{bc}|{qb_acc}"
+            out[key] = target_line
+    _ENTITY_MAPPING_CACHE[profile_id] = (now, out)
     return out
 
 
@@ -268,17 +307,21 @@ def import_profile_json(json_str: str, *, created_by: str = "") -> str:
     )
     pid_obj = ObjectId(pid)
     for m in payload.get("mappings", []):
-        d.mappings.insert_one({
-            "profile_id": pid_obj,
-            "statement": m["statement"],
-            "breadcrumb": m["breadcrumb"],
-            "qb_account": m["qb_account"],
-            "target_line": m["target_line"],
-            "source": m.get("source", "imported"),
-            "confidence": m.get("confidence"),
-            "updated_at": dblib.now(),
-            "updated_by": created_by,
-        })
+        stmt = m.get("statement")
+        qb_acc = m.get("qb_account")
+        target_line = m.get("target_line")
+        if stmt and qb_acc and target_line is not None:
+            d.mappings.insert_one({
+                "profile_id": pid_obj,
+                "statement": stmt,
+                "breadcrumb": m.get("breadcrumb", ""),
+                "qb_account": qb_acc,
+                "target_line": target_line,
+                "source": m.get("source", "imported"),
+                "confidence": m.get("confidence"),
+                "updated_at": dblib.now(),
+                "updated_by": created_by,
+            })
     for a in payload.get("entity_aliases", []):
         d.entity_aliases.insert_one({
             "profile_id": pid_obj,

@@ -6,6 +6,8 @@ so the user explicitly picks (or creates) a profile every time.
 """
 
 import io
+import hashlib
+import json
 import streamlit as st
 import openpyxl
 import pandas as pd
@@ -17,6 +19,73 @@ from lib.template_discovery import discover_template
 from lib import db as dblib
 from lib import profiles as P
 from lib.ui import hide_streamlit_elements
+
+
+# ── Cached helpers (re-run only when inputs change) ───────────────────────────
+def _dict_hash(d: dict) -> str:
+    return hashlib.md5(json.dumps(d, sort_keys=True, default=str).encode()).hexdigest()
+
+
+@st.cache_data(show_spinner=False, max_entries=8)
+def _cached_master_workbook(qb_data_hash: str, overrides_hash: str, entity_hash: str,
+                             _qb_data, _overrides, _entity_overrides):
+    """Build master workbook. Cache key is the triple hash; values are passed directly."""
+    return build_master_workbook(
+        _qb_data,
+        mapping_overrides=_overrides,
+        entity_mapping_overrides=_entity_overrides,
+    )
+
+
+@st.cache_data(show_spinner=False, max_entries=8)
+def _cached_variants_digest(qb_data_hash: str, overrides_hash: str, entity_hash: str,
+                             _qb_data, _pnl_pivot, _bs_pivot):
+    """Build variants digest. Cache key is the triple hash."""
+    return build_variants_digest(_qb_data, _pnl_pivot, _bs_pivot)
+
+
+@st.cache_data(show_spinner=False, max_entries=4)
+def _cached_template_lines(target_bytes_hash: str, _target_bytes: bytes):
+    """Discover P&L and BS target lines from template. Cached by content hash."""
+    pnl_lines: list = []
+    bs_lines: list  = []
+    try:
+        wb_tpl = openpyxl.load_workbook(io.BytesIO(_target_bytes), data_only=False)
+        year_sheets = discover_template(wb_tpl)
+        for stmt in ["IS", "BS"]:
+            relevant = sorted([s for s in year_sheets if s.statement == stmt],
+                              key=lambda s: -(s.year or 0))
+            if not relevant:
+                continue
+            labels = [
+                r.label for r in relevant[0].rows
+                if r.role in ("data", "preloaded", "subtotal")
+                and r.label.strip()
+            ]
+            if stmt == "IS":
+                pnl_lines = labels
+            else:
+                bs_lines = labels
+    except Exception:
+        pass
+    return pnl_lines, bs_lines
+
+
+@st.cache_data(show_spinner=False, max_entries=4)
+def _cached_linked_workbook(qb_data_hash: str, target_hash: str,
+                             overrides_hash: str, entity_hash: str,
+                             sheets_key: str, entity_col_key: str,
+                             _qb_data, _target_bytes, _overrides, _entity_overrides,
+                             _selected_sheets, _entity_col_map):
+    """Build linked workbook. Cached by all relevant inputs."""
+    return build_linked_workbook(
+        _qb_data,
+        _target_bytes,
+        mapping_overrides=_overrides,
+        entity_mapping_overrides=_entity_overrides,
+        selected_sheets=_selected_sheets,
+        entity_col_mapping=_entity_col_map or None,
+    )
 
 
 hide_streamlit_elements()
@@ -61,14 +130,25 @@ entity_session_overrides: dict = dict(st.session_state.get("entity_mapping_overr
 generic_lookup = {**saved_lookup, **session_overrides}
 entity_lookup  = {**entity_saved_lookup, **entity_session_overrides}
 
-# ── Build master + digest ────────────────────────────────────────────────────
-with st.spinner("Building consolidated master + variants digest..."):
-    master_buf, pnl_pivot, bs_pivot = build_master_workbook(
-        qb_data,
-        mapping_overrides=generic_lookup,
-        entity_mapping_overrides=entity_lookup,
+# Compute stable cache keys for the expensive builds
+_qb_hash       = _dict_hash({
+    ent: {"variant": info.get("variant"), "n_pnl": len(info.get("pnl_rows", [])),
+          "n_bs": len(info.get("bs_rows", []))}
+    for ent, info in qb_data.items()
+})
+_overrides_hash = _dict_hash(generic_lookup)
+_entity_hash    = _dict_hash(entity_lookup)
+
+# ── Build master + digest (cached) ───────────────────────────────────────────
+with st.spinner("Building consolidated master…"):
+    master_buf, pnl_pivot, bs_pivot = _cached_master_workbook(
+        _qb_hash, _overrides_hash, _entity_hash,
+        qb_data, generic_lookup, entity_lookup,
     )
-    digest_buf = build_variants_digest(qb_data, pnl_pivot, bs_pivot)
+    digest_buf = _cached_variants_digest(
+        _qb_hash, _overrides_hash, _entity_hash,
+        qb_data, pnl_pivot, bs_pivot,
+    )
 st.session_state.pnl_pivot = pnl_pivot
 st.session_state.bs_pivot  = bs_pivot
 
@@ -80,19 +160,18 @@ _template_sheets_appended = False
 
 if _target_bytes and _selected_sheets:
     try:
-        with st.spinner("Appending template sheets to master workbook…"):
-            linked_buf, _, _, _ = build_linked_workbook(
-                qb_data,
-                _target_bytes,
-                mapping_overrides=generic_lookup,
-                entity_mapping_overrides=entity_lookup,
-                selected_sheets=_selected_sheets,
-                entity_col_mapping=_entity_col_map or None,
+        _t_hash   = hashlib.md5(_target_bytes).hexdigest()
+        _sh_key   = json.dumps(sorted(_selected_sheets))
+        _ec_key   = json.dumps(_entity_col_map, sort_keys=True, default=str) if _entity_col_map else ""
+        with st.spinner("Appending template sheets…"):
+            linked_buf, _, _, _ = _cached_linked_workbook(
+                _qb_hash, _t_hash, _overrides_hash, _entity_hash,
+                _sh_key, _ec_key,
+                qb_data, _target_bytes, generic_lookup, entity_lookup,
+                _selected_sheets, _entity_col_map,
             )
             master_wb = openpyxl.load_workbook(io.BytesIO(master_buf.getvalue()))
-            linked_wb = openpyxl.load_workbook(
-                io.BytesIO(linked_buf.getvalue()), data_only=False
-            )
+            linked_wb = openpyxl.load_workbook(io.BytesIO(linked_buf.getvalue()), data_only=False)
             for sn in _selected_sheets:
                 if sn in linked_wb.sheetnames:
                     copy_sheet_into_workbook(linked_wb, sn, master_wb)
@@ -104,31 +183,14 @@ if _target_bytes and _selected_sheets:
     except Exception as _err:
         st.warning(f"⚠️ Could not append template sheets to master workbook: {_err}")
 
-# ── Dynamic target lines from uploaded template ──────────────────────────────
+# ── Dynamic target lines from uploaded template (cached) ─────────────────────
 target_lines_pnl: list = []
 target_lines_bs: list  = []
 template_loaded = bool(st.session_state.get("target_bytes"))
 if template_loaded:
-    try:
-        wb_tpl = openpyxl.load_workbook(
-            io.BytesIO(st.session_state.target_bytes), data_only=False)
-        year_sheets = discover_template(wb_tpl)
-        for stmt in ["IS", "BS"]:
-            relevant = sorted([s for s in year_sheets if s.statement == stmt],
-                              key=lambda s: -(s.year or 0))
-            if not relevant:
-                continue
-            labels = [
-                r.label for r in relevant[0].rows
-                if r.role in ("data", "preloaded", "subtotal")
-                and r.label.strip()
-            ]
-            if stmt == "IS":
-                target_lines_pnl = labels
-            else:
-                target_lines_bs = labels
-    except Exception as e:
-        st.warning(f"Could not auto-discover target template: {e}")
+    _tb = st.session_state.target_bytes
+    _tb_hash = hashlib.md5(_tb).hexdigest()
+    target_lines_pnl, target_lines_bs = _cached_template_lines(_tb_hash, _tb)
 
 # ── Metrics ──────────────────────────────────────────────────────────────────
 def leaf_index(pivot):
