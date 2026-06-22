@@ -9,11 +9,78 @@ import openpyxl
 from lib.parser import parse_uploaded_files
 from lib.template_discovery import discover_template
 from lib.ui import hide_streamlit_elements
+from lib import db as dblib
+from lib import profiles as P
 
 hide_streamlit_elements()
 
 st.title("📂 Step 1 — Upload Files")
 
+# ── Profile selector at the TOP ───────────────────────────────────────────────
+db_online = dblib.is_connected()
+
+if db_online:
+    all_profiles = P.list_profiles()
+    with st.container(border=True):
+        pc1, pc2, pc3 = st.columns([3, 2, 2])
+        with pc1:
+            profile_options = {str(p["_id"]): p["name"] for p in all_profiles}
+            profile_ids     = [""] + list(profile_options.keys())
+            profile_labels  = ["— select a profile —"] + list(profile_options.values())
+            current_id      = st.session_state.get("active_profile_id", "")
+            current_index   = profile_ids.index(current_id) if current_id in profile_ids else 0
+            chosen_id = st.selectbox(
+                "🗂️ Active Profile",
+                options=profile_ids,
+                format_func=lambda x: profile_labels[profile_ids.index(x)],
+                index=current_index,
+                key="p1_profile_selector",
+                help="Select a profile so your mapping decisions are saved and reloaded across sessions.",
+            )
+            if chosen_id != current_id:
+                st.session_state.active_profile_id = chosen_id
+                st.rerun()
+        with pc2:
+            new_profile_name = st.text_input(
+                "➕ Create new profile",
+                placeholder="New profile name…",
+                key="p1_new_profile_name",
+            )
+        with pc3:
+            st.write("")
+            st.write("")
+            if st.button("Create & activate", key="p1_create_profile_btn",
+                         use_container_width=True, type="secondary"):
+                if new_profile_name.strip():
+                    new_id = P.create_profile(new_profile_name.strip())
+                    st.session_state.active_profile_id = str(new_id)
+                    st.success(f"✅ Created profile **{new_profile_name.strip()}**.")
+                    st.rerun()
+                else:
+                    st.warning("Enter a name first.")
+else:
+    st.warning(f"MongoDB unavailable — session-only mode. ({dblib.connection_error()})")
+
+# Auto-load most recent profile if none selected
+if db_online and not st.session_state.get("active_profile_id"):
+    refreshed_profiles = P.list_profiles()
+    if refreshed_profiles:
+        st.session_state.active_profile_id = str(refreshed_profiles[0]["_id"])
+
+# Resolve active profile for display
+active_profile = None
+if db_online:
+    active_id = st.session_state.get("active_profile_id")
+    if active_id:
+        active_profile = P.get_profile(active_id)
+    if active_profile:
+        st.success(f"📂 Active profile: **{active_profile['name']}**")
+    else:
+        st.info("No profile active — session-only. Select or create a profile above to persist mappings.")
+
+st.divider()
+
+# ── QB File Upload ─────────────────────────────────────────────────────────────
 st.markdown("Upload your **QuickBooks Excel exports** (one .xlsx per entity / LLC).")
 st.markdown("Each file should have a *Profit & Loss* sheet AND a *Balance Sheet As of …* sheet.")
 
@@ -228,22 +295,84 @@ if st.session_state.get("target_bytes"):
                     st.markdown("<br>", unsafe_allow_html=True)
                     save_col, info_col = st.columns([2, 5])
                     with save_col:
-                        if st.button("💾 Save Configuration", type="primary", use_container_width=True):
+                        save_cfg_btn = st.button(
+                            "💾 Save Configuration", type="primary", use_container_width=True,
+                            key="p1_save_config_btn"
+                        )
+                    with info_col:
+                        n_auto = sum(
+                            1 for tc in unique_template_cols
+                            if tc not in existing_mapping and _auto_match(tc, qb_entities)
+                        )
+                        if active_profile:
+                            st.caption(
+                                f"{len(unique_template_cols)} unique template columns • "
+                                f"{n_auto} auto-matched • adjust then click Save. "
+                                f"Saving to profile **{active_profile['name']}**."
+                            )
+                        elif db_online:
+                            st.caption(
+                                f"{len(unique_template_cols)} unique template columns • "
+                                f"{n_auto} auto-matched • ⚠️ No profile active — "
+                                "select one above to persist."
+                            )
+                        else:
+                            st.caption(
+                                f"{len(unique_template_cols)} unique template columns • "
+                                f"{n_auto} auto-matched • adjust then click Save."
+                            )
+
+                    if save_cfg_btn:
+                        # ── Gate: require a profile if DB is online ────────
+                        if db_online and not active_profile:
+                            st.error(
+                                "❌ **No profile selected.** Please select or create a profile "
+                                "at the top of this page before saving — otherwise your "
+                                "configuration will only last for this browser session."
+                            )
+                            with st.expander("🗂️ Quick: select or create a profile now",
+                                             expanded=True):
+                                qp_cols = st.columns([3, 2, 2])
+                                with qp_cols[0]:
+                                    refreshed_profiles = P.list_profiles()
+                                    rp_ids    = [""] + [str(p["_id"]) for p in refreshed_profiles]
+                                    rp_labels = ["— select —"] + [p["name"] for p in refreshed_profiles]
+                                    picked = st.selectbox(
+                                        "Select existing profile",
+                                        options=rp_ids,
+                                        format_func=lambda x: rp_labels[rp_ids.index(x)],
+                                        key="p1_save_gate_select"
+                                    )
+                                    if picked:
+                                        st.session_state.active_profile_id = picked
+                                        st.rerun()
+                                with qp_cols[1]:
+                                    qp_name = st.text_input(
+                                        "Or create new", placeholder="Profile name…",
+                                        key="p1_save_gate_new_name"
+                                    )
+                                with qp_cols[2]:
+                                    st.write("")
+                                    st.write("")
+                                    if st.button("Create & retry", key="p1_save_gate_create_btn",
+                                                 use_container_width=True):
+                                        if qp_name.strip():
+                                            nid = P.create_profile(qp_name.strip())
+                                            st.session_state.active_profile_id = str(nid)
+                                            st.success(
+                                                f"Created **{qp_name.strip()}**. Click Save again."
+                                            )
+                                            st.rerun()
+                                        else:
+                                            st.warning("Enter a profile name.")
+                        else:
+                            # ── Save configuration ─────────────────────────
                             st.session_state.template_entity_mapping = new_mapping
                             n_mapped = sum(1 for v in new_mapping.values() if v)
                             st.success(
                                 f"✅ Saved: **{len(selected_sheets)} sheets** selected, "
                                 f"**{n_mapped}/{len(unique_template_cols)}** columns mapped."
                             )
-                    with info_col:
-                        n_auto = sum(
-                            1 for tc in unique_template_cols
-                            if tc not in existing_mapping and _auto_match(tc, qb_entities)
-                        )
-                        st.caption(
-                            f"{len(unique_template_cols)} unique template columns • "
-                            f"{n_auto} auto-matched • adjust then click Save."
-                        )
 
     except Exception as e:
         st.error(f"Could not process template for configuration: {e}")

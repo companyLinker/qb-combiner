@@ -61,98 +61,174 @@ def fit(ws, widths):
 
 
 SYNONYMS = {
+    # ── INCOME ───────────────────────────────────────────────────────────────
     "sales": ["sales", "retail sales", "food sales", "total sales", "ordinary income", "sales :-"],
     "retail sales": ["sales", "retail sales", "food sales", "total sales", "ordinary income", "sales :-"],
     "food sales": ["sales", "retail sales", "food sales", "total sales", "ordinary income", "sales :-"],
     "sales :-": ["sales", "retail sales", "food sales", "total sales", "ordinary income", "sales :-"],
-    
-    "cash on hand and in bank": ["cash on hand and in bank", "cash on hand", "cash in bank", "cash on hand & in bank", "total cash & bank"],
-    "cash on hand": ["cash on hand and in bank", "cash on hand", "cash in bank", "cash on hand & in bank", "total cash & bank"],
-    "cash in bank": ["cash on hand and in bank", "cash on hand", "cash in bank", "cash on hand & in bank", "total cash & bank"],
-    
-    "receivable from deliveries": ["receivable from deliveries", "delivery sales receivable", "delivery receivable", "delivery sales  receivable", "delivery fees expense"],
-    "delivery sales  receivable": ["receivable from deliveries", "delivery sales receivable", "delivery receivable", "delivery sales  receivable", "delivery fees expense"],
-    
-    "due from/(due to) affiliates": ["due from/(due to) affiliates", "due from (to) affiliates", "due from/to affiliates", "due to from affiliates", "due from to affiliates"],
-    "due from (to) affiliates": ["due from/(due to) affiliates", "due from (to) affiliates", "due from/to affiliates", "due to from affiliates", "due from to affiliates"],
-    
-    "inventory": ["inventory", "ending inventory", "opening inventory"],
-    "ending inventory": ["inventory", "ending inventory", "less: inventory at 12/31/2023", "less: inventory"],
-    "opening inventory": ["inventory", "opening inventory", "opening inventory 01/01/2023"],
-    
-    "equipments": ["equipments", "equipment"],
-    "equipment": ["equipments", "equipment"],
-    
-    "leasehold improvemrnts": ["leasehold improvemrnts", "leasehold improvements", "leasehold imp", "leasehold improvement"],
-    "leasehold improvements": ["leasehold improvemrnts", "leasehold improvements", "leasehold imp", "leasehold improvement"],
-    "leasehold imp": ["leasehold improvemrnts", "leasehold improvements", "leasehold imp", "leasehold improvement"],
-    
-    "franchise & advt fees": ["franchise & advt fees", "total franchise fees", "franchise fees", "franchise fee"],
-    "total franchise fees": ["franchise & advt fees", "total franchise fees", "franchise fees", "franchise fee"],
-    "franchise fees": ["franchise & advt fees", "total franchise fees", "franchise fees", "franchise fee"],
-    
-    "restaurant supp": ["restaurant supp", "restaurant supplies", "restaurant supply"],
-    "restaurant supplies": ["restaurant supp", "restaurant supplies", "restaurant supply"],
-    
-    "uniform": ["uniform", "uniforms", "uniform "],
-    "uniforms": ["uniform", "uniforms", "uniform "],
-    
-    "delivery charges": ["delivery charges", "delivery fees expense", "delivery expense"],
-    "delivery fees expense": ["delivery charges", "delivery fees expense", "delivery expense"],
-    
-    "auto expense": ["auto expense", "auto expenses and travel", "auto expenses", "auto expense & travel", "auto and travel"],
-    "auto expenses and travel": ["auto expense", "auto expenses and travel", "auto expenses", "auto expense & travel", "auto and travel"],
-    
-    "cleaning exp": ["cleaning exp", "cleaning expenses", "cleaning expense"],
-    "cleaning expenses": ["cleaning exp", "cleaning expenses", "cleaning expense"],
-    
-    "insurance exp & workers comp": ["insurance exp & workers comp", "insurance & workers comp", "insurance exp", "insurance expense", "insurance"],
-    "insurance & workers comp": ["insurance exp & workers comp", "insurance & workers comp", "insurance exp", "insurance expense", "insurance"],
-    
-    "rent": ["rent", "rent & cam charges", "rent expense", "rent payable", "rent cam", "rent & cam"],
-    "rent & cam charges": ["rent", "rent & cam charges", "rent expense", "rent payable", "rent cam", "rent & cam"],
-    
-    "utilities": ["utilities", "utility", "utilities expense"],
-    
-    "repair & maint": ["repair & maint", "repairs and maintenance", "repair and maintenance", "repairs & maintenance", "repairs"],
-    "repairs and maintenance": ["repair & maint", "repairs and maintenance", "repair and maintenance", "repairs & maintenance", "repairs"],
-    
-    "credit card charges": ["credit card charges", "merchant fees", "merchant card charges"],
-    
-    "security and alarm": ["security and alarm", "alarm and security", "alarm & security", "security & alarm"],
-    "alarm and security": ["security and alarm", "alarm and security", "alarm & security", "security & alarm"],
-    
-    "licence and permits": ["licence and permits", "licenses and permits", "license and permits", "licenses & permits"],
-    "licenses and permits": ["licence and permits", "licenses and permits", "license and permits", "licenses & permits"],
-    
-    "office expenses": ["office expenses", "office supplies and expense", "office supplies", "office expense"],
-    "office supplies and expense": ["office expenses", "office supplies and expense", "office supplies", "office expense"],
-    
-    "payroll expense": ["payroll expense", "payroll processing", "payroll service fees", "payroll processing fees", "401(k) expenses", "401k expense", "401k expenses"],
-    "payroll processing": ["payroll expense", "payroll processing", "payroll service fees", "payroll processing fees", "401(k) expenses", "401k expense", "401k expenses"],
-    
-    "shortages": ["shortages", "shortages & overs", "shortage & over", "cash short/over"],
-    "shortages & overs": ["shortages", "shortages & overs", "shortage & over", "cash short/over"],
-    
-    "bonus": ["bonus", "bonus expsnse", "bonus expense"],
-    "bonus expsnse": ["bonus", "bonus expsnse", "bonus expense"],
-    
-    "misc exp": ["misc exp", "miscellaneous expenses", "miscellaneous expense", "misc expense"],
-    "miscellaneous expenses": ["misc exp", "miscellaneous expenses", "miscellaneous expense", "misc expense"],
-    
-    "regular hours": ["regular hours", "salaries & wages", "salaries and wages", "salary & wages", "wages", "salaries"],
-    "salary": ["salary", "salaries & wages", "salaries and wages", "salary & wages", "wages", "salaries"],
-    "ot hours": ["ot hours", "salaries & wages", "salaries and wages", "salary & wages", "wages", "salaries"],
-    "salaries & wages": ["regular hours", "salary", "ot hours", "salaries & wages", "salaries and wages", "salary & wages", "wages", "salaries"],
+    "rebate income": ["rebate income", "rebates", "discount received", "discounts received"],
+    "discount received": ["rebate income", "rebates", "discount received", "discounts received"],
+    "cam charges collected": ["cam charges collected", "cam income", "cam charges income"],
+    "income from partnership / k-1": ["income from partnership / k-1", "k1 income", "k-1 income", "income from k1", "income from k-1", "income from partnership"],
+    "income from other entities": ["income from other entities", "income from other", "other entity income"],
+    "management fees income": ["management fees  income", "management fees income", "management fee income"],
+    "erc credit income": ["erc credit income", "erc income", "employee retention credit"],
+    "eidl grant income": ["eidl grant income", "eidl grant", "eidl stimulus"],
+    "interest income": ["interest income", "interest earned", "bank interest"],
+    "rental income": ["rental income", "rent income"],
+    "non taxable ppp income": ["non taxable ppp income", "ppp income", "ppp loan forgiveness"],
 
-    "profit transfer to ap north": ["profit transfer to ap north", "profit sharing expense", "profit sharing", "profit transfer"],
-    "misc taxes": ["misc taxes", "misc tax", "-misc tax", "local mercantile tax"],
-    "re tax and proprty tax": ["re tax and proprty tax", "real estate tax", "property tax", "re tax", "real estate  tax"],
-    "real estate  tax": ["re tax and proprty tax", "real estate tax", "property tax", "re tax", "real estate  tax"],
-    "payroll taxes payable": ["payroll taxes payable", "payroll liabilities"],
-    "payroll liabilities": ["payroll taxes payable", "payroll liabilities"],
-    "state filing fees": ["state filing fees", "state filing fees payable", "annual report fees", "filing fees", "filing fee"],
-    "state filing fees payable": ["state filing fees", "state filing fees payable", "annual report fees", "filing fees", "filing fee"],
+    # ── COGS / LABOR ─────────────────────────────────────────────────────────
+    "salaries & wages": ["salaries & wages", "regular hours", "salary", "ot hours", "salaries and wages", "salary & wages", "wages", "salaries", "salaries wages"],
+    "regular hours": ["regular hours", "salaries & wages", "salaries and wages"],
+    "ot hours": ["ot hours", "overtime", "salaries & wages"],
+    "kitchen labor": ["kitchen labor", "kitchen labour"],
+    "training cost": ["training cost", "training", "training expense"],
+    "payroll taxes": ["payroll taxes", "payroll tax", "fica", "social security tax", "unemployment tax"],
+    "bonus": ["bonus", "bonus expsnse", "bonus expense"],
+    "performance bonus": ["performance bonus", "performance based bonus"],
+    "profit sharing expense": ["profit sharing expense", "profit sharing", "profit transfer"],
+    "covid care": ["covid care", "covid pay", "covid sick pay"],
+    "insurance & workers' compensation": ["insurance & workers' compensation", "insurance exp & workers comp", "insurance & workers comp", "insurance exp", "insurance expense", "insurance", "workers compensation", "workers comp"],
+
+    # ── COGS / FRANCHISE ─────────────────────────────────────────────────────
+    "franchise & advt fees": ["franchise & advt fees", "total franchise fees", "franchise fees", "franchise fee", "royalty", "ad fund"],
+    "franchise preservation fees": ["franchise preservation fees", "franchise preservation", "preservation fee"],
+
+    # ── COGS / PURCHASE ──────────────────────────────────────────────────────
+    "purchase": ["purchase", "purchases", "food purchase", "food purchases"],
+    "opening inventory": ["opening inventory", "beginning inventory", "inventory at 01/01"],
+    "ending inventory": ["ending inventory", "closing inventory", "inventory at 12/31", "less: inventory"],
+
+    # ── COGS / DELIVERY ──────────────────────────────────────────────────────
+    "delivery fees expense": ["delivery fees expense", "delivery charges", "delivery expense", "doordash", "grubhub", "ubereats", "uber eats", "otter"],
+    "delivery charges": ["delivery charges", "delivery fees expense", "delivery expense"],
+    "delivery sales receivable": ["delivery sales receivable", "receivable from deliveries", "delivery receivable", "delivery sales  receivable"],
+
+    # ── COGS / OTHER ─────────────────────────────────────────────────────────
+    "restaurant supplies": ["restaurant supplies", "restaurant supp", "restaurant supply", "kitchen smallware", "smallware"],
+    "restaurant supp": ["restaurant supp", "restaurant supplies", "restaurant supply"],
+    "uniforms": ["uniforms", "uniform", "uniform "],
+    "uniform": ["uniform", "uniforms", "uniform "],
+    "gift card charges": ["gift card charges", "gift card expense"],
+    "food for employees": ["food for employees", "employee meals", "employee food"],
+
+    # ── DIGITAL / POPEYES ────────────────────────────────────────────────────
+    "popeyes digital transaction fee": ["popeyes digital transaction fee", "digital transaction fee", "digital transaction"],
+    "popeyes ordering technology fee": ["popeyes ordering technology fee", "ordering technology fee", "ordering tech fee"],
+    "popeyes guest care fee": ["popeyes guest care fee", "guest care fee", "guest care"],
+    "popeyes service check": ["popeyes service check", "service check", "popeyes service"],
+
+    # ── OPERATING EXPENSES ───────────────────────────────────────────────────
+    "auto expenses and travel": ["auto expenses and travel", "auto expense", "auto expenses", "auto expense & travel", "auto and travel"],
+    "auto expense": ["auto expense", "auto expenses and travel", "auto expenses"],
+    "advertising and promotion": ["advertising and promotion", "advertising", "advertise", "promotion", "marketing"],
+    "bank service charges": ["bank service charges", "bank charges", "bank service", "bank fees"],
+    "cleaning expenses": ["cleaning expenses", "cleaning exp", "cleaning expense", "cleaning"],
+    "rent & cam charges": ["rent & cam charges", "rent", "rent expense", "rent & cam", "cam charges"],
+    "utilities": ["utilities", "utility", "utilities expense", "electricity", "water", "gas"],
+    "real estate tax": ["real estate tax", "re tax and proprty tax", "property tax", "real estate  tax"],
+    "repairs and maintenance": ["repairs and maintenance", "repair & maint", "repair and maintenance", "repairs & maintenance", "repairs", "maintenance"],
+    "credit card charges": ["credit card charges", "merchant fees", "merchant card charges", "credit card fee"],
+    "management fees": ["management fees", " management fees", "    management fees", "mgmt fees"],
+    "legal fees": ["legal fees", "legal expense", "attorney fees"],
+    "professional fees": ["professional fees", "professional expense", "accounting fees", "accounting"],
+    "alarm and security": ["alarm and security", "security and alarm", "alarm & security", "security & alarm", "security expense"],
+    "licenses and permits": ["licenses and permits", "licence and permits", "license and permits", "licenses & permits", "license and permit"],
+    "office supplies and expense": ["office supplies and expense", "office expenses", "office supplies", "office expense"],
+    "payroll processing": ["payroll processing", "payroll expense", "payroll service fees", "payroll processing fees"],
+    "401(k) expenses": ["401(k) expenses", "401k expense", "401k expenses", "payroll expense"],
+    "payroll expense": ["payroll expense", "payroll processing", "401(k) expenses"],
+    "shortage and overs": ["shortage and overs", "shortages", "shortages & overs", "shortage & over", "cash short/over"],
+    "shortages": ["shortages", "shortages & overs", "shortage & over", "cash short/over", "shortage and overs"],
+    "kiosk fees": ["kiosk fees", "kiosk fee", "kiosk"],
+    "dues and subscriptions": ["dues and subscriptions", "dues", "subscriptions", "subscription"],
+    "cash handling service": ["cash handling service", "cash handling"],
+    "house charge": ["house charge", "house charges"],
+    "convention expense": ["convention expense", "convention expenses", "convention", "convension expenses"],
+    "refinance charges": ["refinance charges", "refinancing charges"],
+    "guaranteed payment": ["guaranteed payment", "guaranteed payments"],
+    "brokerage fees": ["brokerage fees", "brokerage fee", "brokerage"],
+    "software expense": ["software expense", "software", "computer expenses", "computer expense"],
+    "equipment rental": ["equipment rental", "equipment lease"],
+    "donation": ["donation", "donations", "charity"],
+    "loan fees": ["loan fees", "loan fee"],
+    "miscellaneous expenses": ["miscellaneous expenses", "misc exp", "miscellaneous expense", "misc expense", "misc"],
+    "annual report fees": ["annual report fees", "annual report fee", "annual report"],
+    "state filing fees": ["state filing fees", "state filing fees payable", "annual report fees", "filing fees", "filing fee", "nj filing"],
+    "state taxes / illinois replacement tax": ["state taxes / illinois replacement tax", "state taxes", "illinois replacement tax", "state tax"],
+    "meal taxes": ["meal taxes", "meal tax", "restaurant tax", "misc taxes"],
+    "penalty and interest": ["penalty and interest", "penalty", "interest penalty"],
+    "interest to bank": ["interest to bank", "bank interest expense", "interest expense bank"],
+    "interest to others": ["interest to others", "interest expense", "interest to other"],
+    "depreciation": ["depreciation", "depreciation expense"],
+    "amortization": ["amortization", "amortisation"],
+
+    # ── NON-CASH / ADJUSTMENTS ────────────────────────────────────────────────
+    "gain / (loss) on sale of assets": ["gain / (loss) on sale of assets", "gain on sale", "loss on sale", "gain loss on disposal"],
+    "non-deductible expense": ["non-deductible expense", "non deductible expense"],
+    "wotc non-taxable expense": ["wotc non-taxable expense", "wotc", "wotc credit"],
+    "development rights written off": ["development rights written off", "development right write off"],
+    "donation from k-1 / passthrough": ["donation from k-1 / passthrough", "donation from k1", "passthrough donation"],
+    "1231 loss from k-1": ["1231 loss from k-1", "1231 loss", "section 1231 loss"],
+    "profit / loss transfer to management entity": ["profit / loss transfer to management entity", "profit transfer to management", "profit transfer"],
+    "profit transfer to ap north": ["profit transfer to ap north", "profit sharing expense", "profit sharing"],
+
+    # ── BALANCE SHEET — ASSETS ────────────────────────────────────────────────
+    "cash on hand": ["cash on hand", "petty cash", "cash on hand and in bank"],
+    "cash in bank": ["cash in bank", "cash on hand and in bank", "pnc checking", "bank account", "checking account"],
+    "cash on hand and in bank": ["cash on hand and in bank", "cash on hand", "cash in bank", "cash on hand & in bank", "total cash & bank"],
+    "credit card receivable": ["credit card receivable", "credit card receivables"],
+    "due from (to) affiliates": ["due from (to) affiliates", "due from/(due to) affiliates", "due from/to affiliates", "due to from affiliates"],
+    "inventory": ["inventory", "ending inventory", "opening inventory", "food inventory"],
+    "loan receivable from partners": ["loan receivable from partners", "loan receivable", "loan recievable", "due from partners"],
+    "investment in other business": ["investment in other business", "investment in business"],
+    "investment in affiliates": ["investment in affiliates", "investment in affiliate"],
+    "security deposit": ["security deposit", "security deposits"],
+    "escrow deposit": ["escrow deposit", "escrow"],
+    "work in progress": ["work in progress", "wip", "construction in progress"],
+    "exchanges": ["exchanges", "exchange", "1031 exchange"],
+
+    # ── BALANCE SHEET — FIXED / INTANGIBLE ───────────────────────────────────
+    "equipments": ["equipments", "equipment", "furniture fixtures", "ffe"],
+    "less: accumulated depreciation": ["less: accumulated depreciation", "accumulated depreciation", "acc depreciation"],
+    "goodwill": ["goodwill"],
+    "franchise fees": ["franchise fees", "franchise fee", "franchise cost"],
+    "leasehold imp. (intangible)": ["leasehold imp. (intangible)", "leasehold improvements", "leasehold improvemrnts", "leasehold improvement", "leasehold imp"],
+    "organization costs": ["organization costs", "organization expenses", "organizational costs"],
+    "deferred financing costs": ["deferred financing costs", "loan cost", "deferred loan cost", "financing costs"],
+    "closing costs": ["closing costs", "closing cost"],
+    "development rights": ["development rights", "development right"],
+
+    # ── BALANCE SHEET — LIABILITIES ──────────────────────────────────────────
+    "accounts payable": ["accounts payable", "ap"],
+    "accrued expenses": ["accrued expenses", "accrued liabilities", "accrued expense"],
+    "sales tax payable": ["sales tax payable", "sales tax"],
+    "payroll liabilities": ["payroll liabilities", "payroll taxes payable", "payroll tax payable"],
+    "state tax payable": ["state tax payable", "state tax payable-maryland", "state income tax payable"],
+    "non-resident tax payable": ["non-resident tax payable", "non resident tax payable", "md non resident tax"],
+    "net payroll checks payable": ["net payroll checks payable", "net payroll", "payroll checks payable"],
+    "meal taxes payable": ["meal taxes payable", "meal tax payable"],
+    "security deposit payable": ["security deposit payable"],
+    "nj filing fees payable": ["nj filing fees payable", "nj annual filing fees payable"],
+    "insurance proceeds payable": ["insurance proceeds payable"],
+    "plk donation payable": ["plk donation payable", "plk donation"],
+    "tb foundation payable": ["tb foundation payable", "tb foundation"],
+    "loan payable - others (current)": ["loan payable - others (current)", "loan payable others current"],
+    "other current liabilities": ["other current liabilities", "other current liab"],
+    "loan payable to bank": ["loan payable to bank", "bank loan payable", "loan payable bank"],
+    "loan payable to sba / eidl": ["loan payable to sba / eidl", "eidl loan payable", "sba loan", "eidl"],
+    "ppp loan payable": ["ppp loan payable", "ppp loan", "ppp payable"],
+    "loan payable to partners": ["loan payable to partners", "loan payable partner", "partner loan payable"],
+    "loan payable to others": ["loan payable to others", "loan payable other"],
+
+    # ── BALANCE SHEET — EQUITY ────────────────────────────────────────────────
+    "beginning capital (partners' capital - beginning)": ["beginning capital (partners' capital - beginning)", "partner's capital-beging", "beginning capital", "partner capital beginning", "opening capital"],
+    "retained earnings": ["retained earnings", "retained earning"],
+    "add: current year profit / (loss)": ["add: current year profit / (loss)", "current year profit", "net profit", "net income"],
+    "distribution paid to partner": ["distribution paid to partner", "partner distribution", "distributions"],
+    "local mercantile tax": ["local mercantile tax", "mercantile tax", "bpt", "school tax"],
+    "state filing fees payable": ["state filing fees payable", "state filing fees", "annual report fees", "filing fees"],
 }
 
 # Pre-normalize the synonyms at runtime once
@@ -313,6 +389,8 @@ def _write_qb_data_sheet(wb, qb_data, mapping):
             # Look up entity-specific target first, then generic
             tgt, _ = mapping.get(("P&L", entity, r["breadcrumb"], r["label"]),
                        mapping.get(("P&L", r["breadcrumb"], r["label"]), ("", "REVIEW")))
+            # Strip spaces so SUMIFS exact-match works (map_pnl returns indented strings)
+            tgt = (tgt or "").strip()
             key = f"P&L|{r['breadcrumb']}|{r['label']}"
             cy = r.get("amount_cy") or r.get("amount") or 0
             py = r.get("amount_py")
@@ -326,6 +404,8 @@ def _write_qb_data_sheet(wb, qb_data, mapping):
                 continue
             tgt, _ = mapping.get(("BS", entity, r["breadcrumb"], r["label"]),
                        mapping.get(("BS", r["breadcrumb"], r["label"]), ("", "REVIEW")))
+            # Strip spaces so SUMIFS exact-match works
+            tgt = (tgt or "").strip()
             key = f"BS|{r['breadcrumb']}|{r['label']}"
             cy = r.get("amount_cy") or r.get("amount") or 0
             py = r.get("amount_py")
@@ -381,7 +461,7 @@ def build_linked_workbook(
     target_bytes,
     mapping_overrides=None,
     entity_mapping_overrides=None,
-    overwrite_preloaded: bool = False,
+    overwrite_preloaded: bool = True,
     selected_sheets=None,
     entity_col_mapping=None,
 ):
@@ -497,8 +577,18 @@ def build_linked_workbook(
 
                 sheet_base = "BS Pivot" if ys.statement == "BS" else "P&L Pivot"
                 pivot_sheet_name = f"{sheet_base} {resolved_year_filter}"
-                formula = f"=SUMIFS('{pivot_sheet_name}'!${col_letter}:${col_letter}, '{pivot_sheet_name}'!$C:$C, \"{matched_target}\")"
-                
+                # Use the template's detected label column (not hardcoded $A).
+                # AP Illinois: label_col=2 → $B; NJ/original: label_col=1 → $A
+                label_col_letter = get_column_letter(ys.label_col)
+                # TRIM() on both the lookup cell and the Target Line column (col C) in pivot.
+                # This ensures Excel SUMIFS exact-match is never broken by leading/trailing spaces
+                # in either the template labels or the auto-mapped target lines.
+                formula = (
+                    f"=SUMIFS('{pivot_sheet_name}'!${col_letter}:${col_letter}, "
+                    f"'{pivot_sheet_name}'!$C:$C, "
+                    f"TRIM(${label_col_letter}{row.row_idx}))"
+                )
+
                 cell.value = formula
                 fmt_money(cell)
                 report["cells_written"] += 1

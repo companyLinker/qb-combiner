@@ -6,6 +6,7 @@ from collections import OrderedDict, defaultdict
 from copy import copy
 
 from openpyxl import Workbook, load_workbook
+from openpyxl.cell.cell import MergedCell
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
@@ -54,9 +55,11 @@ def copy_sheet_into_workbook(src_wb, sheet_name: str, dst_wb, new_name: str | No
         if rd.height:
             dst_ws.row_dimensions[row_idx].height = rd.height
 
-    # Cell values + styles
+    # Cell values + styles — skip merged slave cells (they are read-only proxies)
     for row in src_ws.iter_rows():
         for cell in row:
+            if isinstance(cell, MergedCell):
+                continue  # slave cell — skip; value lives in the top-left master cell
             dst_cell = dst_ws.cell(row=cell.row, column=cell.column)
             dst_cell.value = cell.value
             dst_cell.number_format = cell.number_format
@@ -143,16 +146,16 @@ def write_pivot_sheets(wb, data, mapping_overrides=None, entity_mapping_override
         for e in entities:
             entity_key = f"E|{stmt_kind}|{e}|{bc}|{lbl}"
             if entity_key in entity_overrides and entity_overrides[entity_key]:
-                return entity_overrides[entity_key]
+                return entity_overrides[entity_key].strip()
         generic_key = f"{stmt_kind}|{bc}|{lbl}"
         if generic_key in overrides and overrides[generic_key]:
-            return overrides[generic_key]
+            return overrides[generic_key].strip()
         if stmt_kind == "P&L":
             t, _ = map_pnl(bc, lbl)
-            return t or ""
+            return (t or "").strip()
         else:
             t, _ = map_bs(bc, lbl)
-            return t or ""
+            return (t or "").strip()
 
     def write_pivot(sheet_base_name, pivot, stmt_kind):
         tables_to_write = [
@@ -184,6 +187,9 @@ def write_pivot_sheets(wb, data, mapping_overrides=None, entity_mapping_override
                 total = sum(x for x in values if isinstance(x, (int, float)))
                 n_rep = sum(1 for x in values if isinstance(x, (int, float)) and x != 0)
                 
+                # CRITICAL: strip the target line so Excel SUMIFS exact-match works.
+                # map_pnl/map_bs return strings with leading spaces (e.g. "    RETAIL SALES")
+                # but template labels in cells are plain stripped text.
                 tgt_line = "" if v["is_section"] or v["is_total"] else get_row_target_line(stmt_kind, v["breadcrumb"], v["label"])
                 
                 ws.append([v["breadcrumb"], v["label"], tgt_line, v["indent"], row_type] + values + [total, n_rep])

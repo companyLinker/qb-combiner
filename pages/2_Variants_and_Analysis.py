@@ -30,17 +30,63 @@ if "qb_data" not in st.session_state:
 
 qb_data = st.session_state.qb_data
 
-# ── Auto-load most recent profile if none selected ──────────────────────────
-if dblib.is_connected() and not st.session_state.get("active_profile_id"):
+# ── Profile selector at the TOP ─────────────────────────────────────────────
+db_online = dblib.is_connected()
+
+if db_online:
     all_profiles = P.list_profiles()
-    if all_profiles:
-        st.session_state.active_profile_id = str(all_profiles[0]["_id"])
+
+    with st.container(border=True):
+        pc1, pc2, pc3 = st.columns([3, 2, 2])
+        with pc1:
+            profile_options = {str(p["_id"]): p["name"] for p in all_profiles}
+            profile_ids     = [""] + list(profile_options.keys())
+            profile_labels  = ["— select a profile —"] + list(profile_options.values())
+            current_id    = st.session_state.get("active_profile_id", "")
+            current_index = profile_ids.index(current_id) if current_id in profile_ids else 0
+            chosen_id = st.selectbox(
+                "🗂️ Active Profile",
+                options=profile_ids,
+                format_func=lambda x: profile_labels[profile_ids.index(x)],
+                index=current_index,
+                key="v2_profile_selector",
+                help="Select a saved profile to load + persist your mappings.",
+            )
+            if chosen_id != current_id:
+                st.session_state.active_profile_id = chosen_id
+                st.rerun()
+        with pc2:
+            new_profile_name = st.text_input(
+                "➕ Create new profile",
+                placeholder="New profile name…",
+                key="v2_new_profile_name",
+            )
+        with pc3:
+            st.write("")
+            st.write("")
+            if st.button("Create & activate", key="v2_create_profile_btn",
+                         use_container_width=True, type="secondary"):
+                if new_profile_name.strip():
+                    new_id = P.create_profile(new_profile_name.strip())
+                    st.session_state.active_profile_id = str(new_id)
+                    st.success(f"✅ Created profile **{new_profile_name.strip()}**.")
+                    st.rerun()
+                else:
+                    st.warning("Enter a name first.")
+else:
+    st.warning(f"MongoDB unavailable — session-only mode. ({dblib.connection_error()})")
+
+# Auto-load most recent profile if none selected
+if db_online and not st.session_state.get("active_profile_id"):
+    refreshed_profiles = P.list_profiles()
+    if refreshed_profiles:
+        st.session_state.active_profile_id = str(refreshed_profiles[0]["_id"])
 
 # ── Active profile & lookups ─────────────────────────────────────────────────
 active_profile = None
 saved_lookup: dict        = {}
 entity_saved_lookup: dict = {}
-if dblib.is_connected():
+if db_online:
     active_id = st.session_state.get("active_profile_id")
     if active_id:
         active_profile       = P.get_profile(active_id)
@@ -108,16 +154,24 @@ if template_loaded:
             io.BytesIO(st.session_state.target_bytes), data_only=False)
         year_sheets = discover_template(wb_tpl)
         for stmt in ["IS", "BS"]:
+            # Take the most recent year's sheet for dropdown labels
             relevant = sorted([s for s in year_sheets if s.statement == stmt],
                               key=lambda s: -(s.year or 0))
             if not relevant:
                 continue
-            labels = [r.label for r in relevant[0].rows
-                      if r.role in ("data", "preloaded")]
+            # Include ALL row labels (data + subtotal section headers) — gives
+            # users the full list of valid target destinations.
+            labels = [
+                r.label for r in relevant[0].rows
+                if r.role in ("data", "preloaded", "subtotal")
+                and r.label.strip()
+            ]
             if stmt == "IS":
                 target_lines_pnl = labels
             else:
                 target_lines_bs = labels
+        if target_lines_pnl or target_lines_bs:
+            pass  # dropdowns loaded — shown in caption below
     except Exception as e:
         st.warning(f"Could not auto-discover target template: {e}")
 
@@ -276,7 +330,17 @@ if search.strip():
                 view["Parent path"].str.lower().str.contains(s, na=False)]
 
 view = view.drop(columns=["abs_total"], errors="ignore")
-all_targets = sorted(set([""] + target_lines_pnl + target_lines_bs))
+
+# Build target options: template labels first; fall back to auto-suggestions from rules
+if target_lines_pnl or target_lines_bs:
+    all_targets = sorted(set([""] + target_lines_pnl + target_lines_bs))
+else:
+    # No template loaded — build from auto-mapping suggestions in current data
+    auto_suggestions = sorted(set(
+        r["Auto Suggestion"] for _, r in df.iterrows()
+        if r.get("Auto Suggestion") and r["Auto Suggestion"] != "__SKIP__"
+    ))
+    all_targets = sorted(set([""] + auto_suggestions))
 
 edited = st.data_editor(
     view,
@@ -302,19 +366,57 @@ edited = st.data_editor(
     key="variants_editor_main",
 )
 
-# ── Save ─────────────────────────────────────────────────────────────────────
+# ── Save ──────────────────────────────────────────────────────────────────────
+st.divider()
 col1, col2 = st.columns([1, 3])
 with col1:
     save_btn = st.button("💾 Save mappings", type="primary", use_container_width=True)
 with col2:
     if active_profile:
         st.caption(f"Saves per-company mappings to profile **{active_profile['name']}** in MongoDB.")
-    elif dblib.is_connected():
-        st.caption("No profile active — session only. Go to **🗂️ Profiles** to persist.")
+    elif db_online:
+        st.caption("⚠️ No profile active — session only. Select a profile above to persist.")
     else:
         st.warning("MongoDB offline — session-only mode.")
 
 if save_btn:
+    # ── Gate: require a profile if DB is online ───────────────────────────
+    if db_online and not active_profile:
+        st.error(
+            "❌ **No profile selected.** Please select or create a profile at the top of this page "
+            "before saving — otherwise your mappings will only last for this browser session."
+        )
+        with st.expander("🗂️ Quick: select or create a profile now", expanded=True):
+            qp_cols = st.columns([3, 2, 2])
+            with qp_cols[0]:
+                refreshed_profiles = P.list_profiles()
+                rp_ids    = [""] + [str(p["_id"]) for p in refreshed_profiles]
+                rp_labels = ["— select —"] + [p["name"] for p in refreshed_profiles]
+                picked = st.selectbox("Select existing profile",
+                                      options=rp_ids,
+                                      format_func=lambda x: rp_labels[rp_ids.index(x)],
+                                      key="v2_save_gate_select")
+                if picked:
+                    st.session_state.active_profile_id = picked
+                    st.rerun()
+            with qp_cols[1]:
+                qp_name = st.text_input("Or create new", placeholder="Profile name…",
+                                        key="v2_save_gate_new_name")
+            with qp_cols[2]:
+                st.write("")
+                st.write("")
+                if st.button("Create & retry", key="v2_save_gate_create_btn",
+                             use_container_width=True):
+                    if qp_name.strip():
+                        nid = P.create_profile(qp_name.strip())
+                        st.session_state.active_profile_id = str(nid)
+                        st.success(f"Created **{qp_name.strip()}**. Click Save again.")
+                        st.rerun()
+                    else:
+                        st.warning("Enter a profile name.")
+        st.stop()
+
+    # ── Proceed with save ─────────────────────────────────────────────────
     new_entity_overrides  = dict(entity_session_overrides)
     n_entity_saved = 0
 
@@ -354,8 +456,8 @@ if save_btn:
     else:
         st.success(f"✅ Saved {len(new_entity_overrides)} entity overrides in session.")
 
-st.divider()
 if template_loaded:
     st.info("👉 Next: **💾 Generate Linked Workbook**.")
 else:
     st.warning("Upload a target template on **📂 Upload Files** before generating.")
+
