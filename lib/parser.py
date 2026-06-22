@@ -9,12 +9,23 @@
 
 Auto-detected per file. Each parsed row carries amount_cy, amount_py, change.
 Downstream code reads amount_cy by default; legacy `amount` is an alias for CY.
+
+Performance: files are parsed in parallel using a thread pool. File content is
+hashed (SHA-256) so unchanged files are returned instantly from cache.
 """
 
+import hashlib
 import io
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Dict, Any
+
 import openpyxl
+
+
+# ── Module-level parse cache keyed by SHA-256 of file bytes ─────────────────
+_PARSE_CACHE: Dict[str, Dict[str, Any]] = {}
 
 
 def entity_from_filename(fn):
@@ -89,10 +100,12 @@ def parse_sheet(ws):
             continue
 
         lbl_lower = lbl.lower()
-        is_total = (lbl_lower.startswith("total ")
-                    or lbl_lower in ("net income", "net ordinary income", "net other income")
-                    or "total" in lbl_lower[:6])
-        is_section_only = (amt_cy is None and amt_py is None)
+        is_total = (
+            lbl_lower.startswith("total ")
+            or lbl_lower in ("net income", "net ordinary income", "net other income")
+            or "total" in lbl_lower[:6]
+        )
+        is_section_only = amt_cy is None and amt_py is None
 
         while hierarchy and hierarchy[-1][0] >= lbl_idx:
             hierarchy.pop()
@@ -118,49 +131,140 @@ def parse_sheet(ws):
     return variant, period_cy, period_py, rows
 
 
-def parse_uploaded_files(uploaded_files):
-    all_data = {}
+def _parse_single_file(fname: str, file_bytes: bytes) -> tuple[str, dict]:
+    """Parse one QB export file. Returns (entity_name, data_dict)."""
+    entity = entity_from_filename(fname)
+
+    # Check cache by SHA-256 hash
+    digest = hashlib.sha256(file_bytes).hexdigest()
+    if digest in _PARSE_CACHE:
+        cached = dict(_PARSE_CACHE[digest])
+        cached["file"] = fname  # filename may differ even for same content
+        return entity, cached
+
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True, read_only=True)
+
+        # Sheet classification — order matters: more specific first
+        # Exclusion patterns for BS: "trial balance", "general ledger", "gl", "accrued"
+        _EXCLUDE_FROM_BS = {"trial", "general ledger", "gl ", "accrued", "trial balance"}
+        _EXCLUDE_FROM_PNL = {"trial", "general ledger", "gl ", "accrued"}
+
+        pnl_candidates = []  # (priority, sheet_name)
+        bs_candidates  = []
+
+        for sn in wb.sheetnames:
+            sn_l = sn.lower().strip()
+
+            # Skip sheets that are clearly not financial statements
+            if any(ex in sn_l for ex in ["trial balance", "general ledger", "accrued ledger", "gl "]):
+                continue
+
+            # P&L / Income Statement detection
+            if any(k in sn_l for k in ["profit", "income statement", "income state"]):
+                pnl_candidates.append((0, sn))  # exact keyword match = priority 0
+            elif any(k in sn_l for k in ["p&l", "pnl", "operating"]):
+                pnl_candidates.append((1, sn))
+            elif "income" in sn_l and "balance" not in sn_l:
+                pnl_candidates.append((2, sn))
+
+            # Balance Sheet detection — must have "balance sheet" or just "balance" but NOT "trial"
+            if "balance sheet" in sn_l:
+                bs_candidates.append((0, sn))  # "Balance Sheet" = best match
+            elif "balance" in sn_l and "trial" not in sn_l:
+                bs_candidates.append((1, sn))
+
+        pnl_sheet = min(pnl_candidates, key=lambda x: x[0])[1] if pnl_candidates else None
+        bs_sheet  = min(bs_candidates,  key=lambda x: x[0])[1] if bs_candidates  else None
+
+        if not pnl_sheet or not bs_sheet:
+            result = {
+                "file": fname,
+                "error": "Missing P&L or BS sheet. Found: " + str(wb.sheetnames),
+                "pnl_rows": [], "bs_rows": [],
+                "pnl_period_cy": None, "pnl_period_py": None,
+                "bs_period_cy": None, "bs_period_py": None,
+                "variant": "unknown",
+            }
+            wb.close()
+            return entity, result
+
+        pnl_variant, pnl_cy, pnl_py, pnl_rows = parse_sheet(wb[pnl_sheet])
+        bs_variant, bs_cy, bs_py, bs_rows = parse_sheet(wb[bs_sheet])
+        variant = "triple" if "triple" in (pnl_variant, bs_variant) else "single"
+        wb.close()
+
+        result = {
+            "file": fname,
+            "variant": variant,
+            "pnl_period_cy": pnl_cy, "pnl_period_py": pnl_py,
+            "bs_period_cy": bs_cy, "bs_period_py": bs_py,
+            "pnl_period": pnl_cy,
+            "bs_period": bs_cy,
+            "pnl_rows": pnl_rows,
+            "bs_rows": bs_rows,
+        }
+        # Cache by content hash (without file-specific fields)
+        cacheable = dict(result)
+        cacheable.pop("file", None)
+        _PARSE_CACHE[digest] = cacheable
+        return entity, result
+
+    except Exception as exc:
+        return entity, {
+            "file": fname,
+            "error": str(exc),
+            "pnl_rows": [], "bs_rows": [],
+            "pnl_period_cy": None, "pnl_period_py": None,
+            "bs_period_cy": None, "bs_period_py": None,
+            "variant": "unknown",
+        }
+
+
+def parse_uploaded_files(uploaded_files, max_workers: int = 8):
+    """Parse QB export files in parallel. Returns ordered dict matching upload order."""
+    # Collect (fname, bytes) pairs
+    tasks = []
     for uf in uploaded_files:
         if hasattr(uf, "name"):
             fname = uf.name
             file_bytes = uf.getvalue() if hasattr(uf, "getvalue") else uf.read()
         else:
             fname, file_bytes = uf
+        tasks.append((fname, file_bytes))
 
-        entity = entity_from_filename(fname)
-        wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
+    # Keep deterministic ordering that matches upload order
+    results_ordered = [None] * len(tasks)
 
-        pnl_sheet = bs_sheet = None
-        for sn in wb.sheetnames:
-            sn_l = sn.lower()
-            if any(k in sn_l for k in ["profit", "income statement", "income state"]):
-                pnl_sheet = sn
-            elif "balance" in sn_l:
-                bs_sheet = sn
-
-        if not pnl_sheet or not bs_sheet:
-            all_data[entity] = {
-                "file": fname,
-                "error": "Missing P&L or BS sheet. Found: " + str(wb.sheetnames),
-                "pnl_rows": [], "bs_rows": [],
-                "pnl_period_cy": None, "pnl_period_py": None,
-                "bs_period_cy": None,  "bs_period_py": None,
-                "variant": "unknown",
-            }
-            continue
-
-        pnl_variant, pnl_cy, pnl_py, pnl_rows = parse_sheet(wb[pnl_sheet])
-        bs_variant,  bs_cy,  bs_py,  bs_rows  = parse_sheet(wb[bs_sheet])
-        variant = "triple" if "triple" in (pnl_variant, bs_variant) else "single"
-
-        all_data[entity] = {
-            "file": fname,
-            "variant": variant,
-            "pnl_period_cy": pnl_cy, "pnl_period_py": pnl_py,
-            "bs_period_cy":  bs_cy,  "bs_period_py":  bs_py,
-            "pnl_period": pnl_cy,
-            "bs_period":  bs_cy,
-            "pnl_rows": pnl_rows,
-            "bs_rows":  bs_rows,
+    with ThreadPoolExecutor(max_workers=min(max_workers, len(tasks))) as pool:
+        future_to_idx = {
+            pool.submit(_parse_single_file, fname, fbytes): idx
+            for idx, (fname, fbytes) in enumerate(tasks)
         }
+        for future in as_completed(future_to_idx):
+            idx = future_to_idx[future]
+            try:
+                entity, data = future.result()
+            except Exception as exc:
+                fname = tasks[idx][0]
+                entity = entity_from_filename(fname)
+                data = {
+                    "file": fname, "error": str(exc),
+                    "pnl_rows": [], "bs_rows": [],
+                    "pnl_period_cy": None, "pnl_period_py": None,
+                    "bs_period_cy": None, "bs_period_py": None,
+                    "variant": "unknown",
+                }
+            results_ordered[idx] = (entity, data)
+
+    all_data = {}
+    for entity, data in results_ordered:
+        if entity in all_data:
+            # Deduplicate: append a suffix if same entity name appears twice
+            i = 2
+            while f"{entity} ({i})" in all_data:
+                i += 1
+            entity = f"{entity} ({i})"
+        all_data[entity] = data
+
     return all_data

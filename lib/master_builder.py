@@ -218,101 +218,31 @@ def write_pivot_sheets(wb, data, mapping_overrides=None, entity_mapping_override
 
 
 def build_master_workbook(data, year_guess="2025", mapping_overrides=None, entity_mapping_overrides=None):
-    """Build the consolidated master workbook. Returns BytesIO."""
+    """Build the consolidated master workbook.
+
+    Output contains only the 6 pivot sheets needed for SUMIFS lookups:
+      P&L Pivot CY / PY / Change  and  BS Pivot CY / PY / Change
+    Returns (BytesIO, pnl_pivot, bs_pivot).
+    """
     entities = list(data.keys())
 
+    # Start with an empty workbook; remove the default blank sheet after
+    # pivot sheets have been written (write_pivot_sheets creates its own sheets).
     wb = Workbook()
-    ws = wb.active
-    ws.title = "README"
-    ws["A1"] = f"MASTER CONSOLIDATED — QuickBooks P&L + Balance Sheet (FY {year_guess})"
-    ws["A1"].font = Font(size=16, bold=True, color="1F3864")
-    ws.merge_cells("A1:F1")
-    
-    readme = [
-        ("", ""),
-        ("Files consolidated", f"{len(entities)} entity Excel files"),
-        ("Period (P&L)", data[entities[0]].get("pnl_period", "") if entities else ""),
-        ("Period (BS)", data[entities[0]].get("bs_period", "") if entities else ""),
-        ("", ""),
-        ("Sheet", "What it contains"),
-        ("P&L Long", "Every P&L line from every entity stacked. Long format for filter/pivot."),
-        ("P&L Pivot CY", "P&L Accounts × entities matrix (Current Year) with Grand Total."),
-        ("P&L Pivot PY", "P&L Accounts × entities matrix (Prior Year) with Grand Total."),
-        ("P&L Pivot Change", "P&L Accounts × entities matrix ($ Change) with Grand Total."),
-        ("BS Long", "Every BS line stacked."),
-        ("BS Pivot CY", "BS Accounts × entities matrix (Current Year)."),
-        ("BS Pivot PY", "BS Accounts × entities matrix (Prior Year)."),
-        ("BS Pivot Change", "BS Accounts × entities matrix ($ Change)."),
-        ("CoA Variants P&L", "Deduplicated P&L account list with frequency, breadcrumb, sum."),
-        ("CoA Variants BS", "Same for Balance Sheet."),
-    ]
+    # The initial active sheet is a blank placeholder — we delete it after
+    # writing the real sheets so the workbook is never completely empty.
+    _placeholder = wb.active
+    _placeholder.title = "_init_"
 
-    for i, (a, b) in enumerate(readme, 2):
-        ws.cell(row=i, column=1, value=a).font = Font(bold=True)
-        ws.cell(row=i, column=2, value=b)
-    ws.column_dimensions["A"].width = 22
-    ws.column_dimensions["B"].width = 120
-
-    headers = ["Entity", "Source File", "Period", "Indent", "Row Type",
-               "Section (L1)", "Category (L2)", "Sub-Category (L3)", "Sub-Sub (L4)", "Sub-Sub-Sub (L5)",
-               "Account / Label", "Amount"]
-    for stmt_label, stmt_key, period_key in [("P&L Long", "pnl_rows", "pnl_period"),
-                                              ("BS Long", "bs_rows", "bs_period")]:
-        ws = wb.create_sheet(stmt_label)
-        ws.append(headers); style_header(ws); ws.freeze_panes = "A2"
-        fit(ws, [28, 32, 16, 7, 12, 28, 28, 28, 28, 28, 38, 16])
-        for entity in entities:
-            info = data[entity]
-            for r in info.get(stmt_key, []):
-                p = r["parents"] + [""] * 5
-                row_type = ("SectionOnly" if r["is_section_only"]
-                            else ("Subtotal/Total" if r["is_total"] else "Leaf"))
-                amt = r["amount"]
-                ws.append([entity, info.get("file"), info.get(period_key), r["indent"], row_type,
-                           p[0], p[1], p[2], p[3], p[4], r["label"], amt])
-                cell = ws.cell(row=ws.max_row, column=12)
-                if isinstance(amt, (int, float)): fmt_money(cell)
-                if r["is_total"]:
-                    for c in ws[ws.max_row]:
-                        c.fill = TOT_FILL; c.font = Font(bold=True)
-                elif r["is_section_only"]:
-                    for c in ws[ws.max_row]:
-                        c.fill = SUB_FILL; c.font = Font(bold=True, italic=True)
-
-    # Write pivots using the helper
+    # Write only the pivot sheets (6 sheets total)
     write_pivot_sheets(wb, data, mapping_overrides, entity_mapping_overrides)
+
+    # Remove the placeholder blank sheet
+    if "_init_" in wb.sheetnames:
+        del wb["_init_"]
 
     pnl_pivot = build_pivot({e: data[e]["pnl_rows"] for e in entities}, entities)
     bs_pivot = build_pivot({e: data[e]["bs_rows"] for e in entities}, entities)
-
-    # CoA Variants
-    def write_coa(ws, pivot):
-        hdr = ["#", "Section (L1)", "Category (L2)", "Sub (L3)", "Sub-Sub (L4)",
-               "Account / Label", "Row Type", "Indent",
-               "# Entities Using", "% of Entities", "Sum of Amount",
-               "Entities Using", "Suggested Target (fill in)"]
-        ws.append(hdr); style_header(ws); ws.freeze_panes = "A2"
-        rows = []
-        for v in pivot.values():
-            parents = v["breadcrumb"].split(" > ") if v["breadcrumb"] else []
-            p = parents + [""] * 4
-            amounts = v["amounts"]
-            used = [e for e in entities if e in amounts and amounts[e] != 0]
-            row_type = ("SectionOnly" if v["is_section"]
-                        else ("Subtotal/Total" if v["is_total"] else "Leaf"))
-            rows.append([p[0], p[1], p[2], p[3], v["label"], row_type, v["indent"],
-                         len(used), len(used) / len(entities), sum(amounts.get(e, 0) for e in entities),
-                         ", ".join(used), ""])
-        rows.sort(key=lambda r: (r[0] or "", r[1] or "", r[2] or "", r[3] or "", r[5] == "Subtotal/Total", r[4] or ""))
-        for i, r in enumerate(rows, 1):
-            ws.append([i] + r)
-            rno = ws.max_row
-            fmt_money(ws.cell(row=rno, column=11))
-            ws.cell(row=rno, column=10).number_format = "0.0%"
-        fit(ws, [5, 24, 24, 24, 24, 38, 14, 8, 12, 10, 20, 60, 36])
-
-    write_coa(wb.create_sheet("CoA Variants P&L"), pnl_pivot)
-    write_coa(wb.create_sheet("CoA Variants BS"), bs_pivot)
 
     buf = io.BytesIO()
     wb.save(buf)

@@ -464,6 +464,8 @@ def build_linked_workbook(
     overwrite_preloaded: bool = True,
     selected_sheets=None,
     entity_col_mapping=None,
+    sheet_pivot_overrides=None,
+    row_pivot_overrides=None,
 ):
     """Build the linked combination workbook. Returns (BytesIO, mapping, year_sheets, report).
 
@@ -474,6 +476,12 @@ def build_linked_workbook(
             to the QB entity name whose data should flow into that column.
             A value of None/missing means use the column header verbatim
             (auto-matching by name). Set a column's value to None to skip it.
+        sheet_pivot_overrides: Optional dict mapping template sheet name to
+            "CY" or "PY" — overrides the auto-detected year filter used when
+            building the pivot tab name in each SUMIFS formula.  E.g.:
+            {"BS 2024": "PY", "IS 2025": "CY"}
+        row_pivot_overrides: Optional dict mapping "sheet_name|row_idx" to the exact
+            pivot sheet name to use for that row's SUMIFS formulas.
     """
     wb = openpyxl.load_workbook(io.BytesIO(target_bytes))
     year_sheets = discover_template(wb)
@@ -575,8 +583,19 @@ def build_linked_workbook(
                     # Entity not uploaded/found: leave cell untouched
                     continue
 
-                sheet_base = "BS Pivot" if ys.statement == "BS" else "P&L Pivot"
-                pivot_sheet_name = f"{sheet_base} {resolved_year_filter}"
+                # Apply per-row override if present; otherwise fallback to sheet-level/auto
+                row_key = f"{ys.sheet_name}|{row.row_idx}"
+                if row_pivot_overrides and row_pivot_overrides.get(row_key):
+                    pivot_sheet_name = row_pivot_overrides[row_key]
+                else:
+                    sheet_base = "BS Pivot" if ys.statement == "BS" else "P&L Pivot"
+                    # Apply per-sheet pivot tab override if provided;
+                    # otherwise fall back to the auto-detected year filter.
+                    if sheet_pivot_overrides and ys.sheet_name in sheet_pivot_overrides:
+                        effective_year_filter = sheet_pivot_overrides[ys.sheet_name]
+                    else:
+                        effective_year_filter = resolved_year_filter
+                    pivot_sheet_name = f"{sheet_base} {effective_year_filter}"
                 # Use the template's detected label column (not hardcoded $A).
                 # AP Illinois: label_col=2 → $B; NJ/original: label_col=1 → $A
                 label_col_letter = get_column_letter(ys.label_col)

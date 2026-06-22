@@ -75,8 +75,11 @@ def _cached_template_lines(target_bytes_hash: str, _target_bytes: bytes):
 def _cached_linked_workbook(qb_data_hash: str, target_hash: str,
                              overrides_hash: str, entity_hash: str,
                              sheets_key: str, entity_col_key: str,
+                             pivot_override_key: str,
+                             row_override_key: str,
                              _qb_data, _target_bytes, _overrides, _entity_overrides,
-                             _selected_sheets, _entity_col_map):
+                             _selected_sheets, _entity_col_map, _sheet_pivot_overrides,
+                             _row_pivot_overrides):
     """Build linked workbook. Cached by all relevant inputs."""
     return build_linked_workbook(
         _qb_data,
@@ -85,6 +88,8 @@ def _cached_linked_workbook(qb_data_hash: str, target_hash: str,
         entity_mapping_overrides=_entity_overrides,
         selected_sheets=_selected_sheets,
         entity_col_mapping=_entity_col_map or None,
+        sheet_pivot_overrides=_sheet_pivot_overrides or None,
+        row_pivot_overrides=_row_pivot_overrides or None,
     )
 
 
@@ -152,36 +157,6 @@ with st.spinner("Building consolidated master…"):
 st.session_state.pnl_pivot = pnl_pivot
 st.session_state.bs_pivot  = bs_pivot
 
-# ── Optionally append selected template sheets (with SUMIFS) to master wb ────
-_target_bytes      = st.session_state.get("target_bytes")
-_selected_sheets   = st.session_state.get("selected_template_sheets")
-_entity_col_map    = st.session_state.get("template_entity_mapping")
-_template_sheets_appended = False
-
-if _target_bytes and _selected_sheets:
-    try:
-        _t_hash   = hashlib.md5(_target_bytes).hexdigest()
-        _sh_key   = json.dumps(sorted(_selected_sheets))
-        _ec_key   = json.dumps(_entity_col_map, sort_keys=True, default=str) if _entity_col_map else ""
-        with st.spinner("Appending template sheets…"):
-            linked_buf, _, _, _ = _cached_linked_workbook(
-                _qb_hash, _t_hash, _overrides_hash, _entity_hash,
-                _sh_key, _ec_key,
-                qb_data, _target_bytes, generic_lookup, entity_lookup,
-                _selected_sheets, _entity_col_map,
-            )
-            master_wb = openpyxl.load_workbook(io.BytesIO(master_buf.getvalue()))
-            linked_wb = openpyxl.load_workbook(io.BytesIO(linked_buf.getvalue()), data_only=False)
-            for sn in _selected_sheets:
-                if sn in linked_wb.sheetnames:
-                    copy_sheet_into_workbook(linked_wb, sn, master_wb)
-            new_buf = io.BytesIO()
-            master_wb.save(new_buf)
-            new_buf.seek(0)
-            master_buf = new_buf
-            _template_sheets_appended = True
-    except Exception as _err:
-        st.warning(f"⚠️ Could not append template sheets to master workbook: {_err}")
 
 # ── Dynamic target lines from uploaded template (cached) ─────────────────────
 target_lines_pnl: list = []
@@ -191,6 +166,17 @@ if template_loaded:
     _tb = st.session_state.target_bytes
     _tb_hash = hashlib.md5(_tb).hexdigest()
     target_lines_pnl, target_lines_bs = _cached_template_lines(_tb_hash, _tb)
+
+# ── Build linked workbook (with pivot overrides) ──────────────────────────────
+# Load saved pivot overrides from session state
+_sheet_pivot_overrides: dict = st.session_state.get("sheet_pivot_overrides", {})
+_row_pivot_overrides: dict = st.session_state.get("row_pivot_overrides", {})
+
+def _is_cy_year(ys, all_sheets):
+    years = [s.year for s in all_sheets if s.statement == ys.statement and s.year]
+    if not years:
+        return True
+    return ys.year == max(years)
 
 # ── Metrics ──────────────────────────────────────────────────────────────────
 def leaf_index(pivot):
@@ -211,14 +197,168 @@ total_abs = (sum(abs(sum(v["amounts"].values())) for v in pnl_leaves.values()) +
 c4.metric("Total $ flowing", f"${total_abs:,.0f}")
 st.caption(f"QB format: **{variant_label}**")
 
+# ── Template sheet variables ───────────────────────────────────────────────
+_target_bytes    = st.session_state.get("target_bytes")
+_selected_sheets = st.session_state.get("selected_template_sheets")
+_entity_col_map  = st.session_state.get("template_entity_mapping")
+
+# Discover template sheet metadata for UI
+_year_sheets_meta: list = []  # list of YearSheet objects for selected sheets
+if _target_bytes and _selected_sheets:
+    try:
+        _wb_meta = openpyxl.load_workbook(io.BytesIO(_target_bytes), data_only=False)
+        from lib.template_discovery import discover_template as _discover
+        _all_ys = _discover(_wb_meta)
+        _year_sheets_meta = [ys for ys in _all_ys if ys.sheet_name in _selected_sheets]
+    except Exception:
+        _year_sheets_meta = []
+
 st.divider()
 st.markdown("### Downloads")
 
-_master_label = (
-    f"⬇ Master Consolidated Workbook (+{len(_selected_sheets)} template sheets)"
-    if _template_sheets_appended
-    else "⬇ Master Consolidated Workbook"
-)
+# ── Pivot Tab Override UI (only when template sheets are selected) ───────────
+_template_sheets_appended = False
+if _target_bytes and _selected_sheets and _year_sheets_meta:
+    with st.expander(
+        f"⚙️ Template Row Formula Overrides ({len(_year_sheets_meta)} classified template sheet(s))",
+        expanded=False,
+    ):
+        st.caption(
+            "By default, the formulas pull from the auto-detected Pivot tab. "
+            "You can override the Pivot tab for individual template rows below. "
+            "Leave blank/empty to keep the default."
+        )
+
+        selected_override_sheet = st.selectbox(
+            "Select Template Sheet to view/override formulas:",
+            options=_selected_sheets,
+            key="v2_override_sheet_sel"
+        )
+
+        ys = next((s for s in _year_sheets_meta if s.sheet_name == selected_override_sheet), None)
+        if ys:
+            override_rows = []
+            existing_ro = st.session_state.get("row_pivot_overrides", {})
+            all_pivot_options = [
+                "",
+                "P&L Pivot CY",
+                "P&L Pivot PY",
+                "P&L Pivot Change",
+                "BS Pivot CY",
+                "BS Pivot PY",
+                "BS Pivot Change"
+            ]
+            for row in ys.rows:
+                if row.role not in ("data", "preloaded"):
+                    continue
+                sheet_base = "BS Pivot" if ys.statement == "BS" else "P&L Pivot"
+                is_cy = _is_cy_year(ys, _year_sheets_meta)
+                def_filter = "CY" if (ys.year is None or is_cy) else "PY"
+                # Apply sheet-level override if present
+                if _sheet_pivot_overrides and ys.sheet_name in _sheet_pivot_overrides:
+                    def_filter = _sheet_pivot_overrides[ys.sheet_name]
+                default_pivot = f"{sheet_base} {def_filter}"
+                
+                row_key = f"{ys.sheet_name}|{row.row_idx}"
+                current_val = existing_ro.get(row_key, "")
+                
+                override_rows.append({
+                    "row_key": row_key,
+                    "Row #": row.row_idx,
+                    "Template Label": row.label,
+                    "Default Pivot Tab": default_pivot,
+                    "Formula Pivot Tab": current_val if current_val else default_pivot,
+                    "Override Pivot Tab": current_val
+                })
+            
+            if override_rows:
+                df_overrides = pd.DataFrame(override_rows)
+                edited_overrides = st.data_editor(
+                    df_overrides,
+                    use_container_width=True,
+                    hide_index=True,
+                    num_rows="fixed",
+                    column_config={
+                        "row_key": None,
+                        "Row #": st.column_config.NumberColumn(disabled=True, width="small"),
+                        "Template Label": st.column_config.TextColumn(disabled=True, width="large"),
+                        "Default Pivot Tab": st.column_config.TextColumn(disabled=True, width="medium"),
+                        "Formula Pivot Tab": st.column_config.TextColumn(disabled=True, width="medium"),
+                        "Override Pivot Tab": st.column_config.SelectboxColumn(
+                            "Override Pivot Tab",
+                            options=all_pivot_options,
+                            width="medium",
+                            required=False
+                        )
+                    },
+                    key=f"row_overrides_editor_{selected_override_sheet}",
+                    height=400
+                )
+                
+                # Save button
+                ro_save_col, _ = st.columns([2, 5])
+                with ro_save_col:
+                    if st.button("💾 Apply Row Overrides", type="primary", use_container_width=True, key="v2_row_override_save"):
+                        new_ro = dict(st.session_state.get("row_pivot_overrides", {}))
+                        for _, r in edited_overrides.iterrows():
+                            rk = r["row_key"]
+                            val = (r["Override Pivot Tab"] or "").strip()
+                            if val:
+                                new_ro[rk] = val
+                            else:
+                                new_ro.pop(rk, None)
+                        st.session_state.row_pivot_overrides = new_ro
+                        st.success("✅ Row-level pivot overrides saved. Re-download to apply.")
+                        st.rerun()
+            else:
+                st.info("No formula rows found in this sheet.")
+
+# ── Build / append template sheets to master ────────────────────────────────
+if _target_bytes and _selected_sheets:
+    try:
+        _t_hash  = hashlib.md5(_target_bytes).hexdigest()
+        _sh_key  = json.dumps(sorted(_selected_sheets))
+        _ec_key  = json.dumps(_entity_col_map, sort_keys=True, default=str) if _entity_col_map else ""
+        _po_key  = json.dumps(
+            {k: v for k, v in _sheet_pivot_overrides.items() if v},
+            sort_keys=True,
+        )
+        _row_po_key = json.dumps(
+            {k: v for k, v in _row_pivot_overrides.items() if v},
+            sort_keys=True,
+        )
+        with st.spinner("Building template sheets with SUMIFS…"):
+            linked_buf, _, _, _ = _cached_linked_workbook(
+                _qb_hash, _t_hash, _overrides_hash, _entity_hash,
+                _sh_key, _ec_key, _po_key, _row_po_key,
+                qb_data, _target_bytes, generic_lookup, entity_lookup,
+                _selected_sheets, _entity_col_map, _sheet_pivot_overrides,
+                _row_pivot_overrides,
+            )
+            master_wb = openpyxl.load_workbook(io.BytesIO(master_buf.getvalue()))
+            linked_wb = openpyxl.load_workbook(io.BytesIO(linked_buf.getvalue()), data_only=False)
+            for sn in _selected_sheets:
+                if sn in linked_wb.sheetnames:
+                    copy_sheet_into_workbook(linked_wb, sn, master_wb)
+            new_buf = io.BytesIO()
+            master_wb.save(new_buf)
+            new_buf.seek(0)
+            master_buf = new_buf
+            _template_sheets_appended = True
+    except Exception as _err:
+        st.warning(f"⚠️ Could not append template sheets to master workbook: {_err}")
+
+# ── Download buttons ─────────────────────────────────────────────────────────────
+if _template_sheets_appended:
+    _n_overrides = sum(1 for v in _row_pivot_overrides.values() if v)
+    _override_note = f" • {_n_overrides} row override(s)" if _n_overrides else ""
+    _master_label = (
+        f"⬇ Master Consolidated Workbook "
+        f"(+{len(_selected_sheets)} template sheet(s){_override_note})"
+    )
+else:
+    _master_label = "⬇ Master Consolidated Workbook"
+
 col1, col2 = st.columns(2)
 with col1:
     st.download_button(
@@ -230,10 +370,13 @@ with col1:
     )
     if _template_sheets_appended:
         st.caption(
-            f"✅ Includes template tabs: **{', '.join(_selected_sheets)}** with SUMIFS data."
+            f"✅ Includes: **P&L Pivot CY/PY/Change**, **BS Pivot CY/PY/Change** "
+            f"+ template tabs: **{', '.join(_selected_sheets)}** with SUMIFS formulas."
         )
     elif _target_bytes and _selected_sheets is None:
         st.caption("ℹ️ Configure template sheets in **📂 Upload Files** to include them here.")
+    else:
+        st.caption("✅ Contains: **P&L Pivot CY/PY/Change** and **BS Pivot CY/PY/Change** pivot sheets.")
 with col2:
     st.download_button(
         "⬇ Variants Digest",

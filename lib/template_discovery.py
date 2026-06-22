@@ -4,6 +4,11 @@ Why: templates evolve. Sheet names get typos, header rows shift, entity columns
 move, new years get added, line items get renamed. Hard-coding row numbers and
 column letters breaks every time. Discovery introspects the actual workbook
 each run and produces a structural plan the builder consumes.
+
+Supports two template layouts:
+  Layout A (NJ/original): labels in column A, entity columns start at B.
+  Layout B (AP Illinois):  col A = "#" index, labels in column B (PARTICULARS),
+                            entity columns start at C.
 """
 
 import re
@@ -12,14 +17,27 @@ from typing import List, Optional, Tuple
 
 
 YEAR_RE = re.compile(r"(20\d{2})")
-_BS_RE = re.compile(r"(balance\s*sheet|balacnce|\bbs\b|\bbs\s*\d|\bbs(?:20\d{2})?$|^bs(?:20\d{2})?$)", re.IGNORECASE)
-_IS_RE = re.compile(r"(income\s*statement|income\s*state|profit|p\s*&\s*l|\bis\b|\bis\s*\d|\bis(?:20\d{2})?$|^is(?:20\d{2})?$|p&l)", re.IGNORECASE)
+_BS_RE = re.compile(
+    r"(balance\s*sheet|balacnce|\bbs\b|\bbs\s*\d|\bbs(?:20\d{2})?$|^bs(?:20\d{2})?$)",
+    re.IGNORECASE,
+)
+_IS_RE = re.compile(
+    r"(income\s*statement|income\s*state|profit|p\s*&\s*l|\bis\b|\bis\s*\d"
+    r"|\bis(?:20\d{2})?$|^is(?:20\d{2})?$|p&l)",
+    re.IGNORECASE,
+)
 SUMMARY_KW = {
-    "total": "total", "subtotal": "total",
-    "adj": "adj", "adjustment": "adj", "elimination": "adj",
+    "total": "total",
+    "subtotal": "total",
+    "adj": "adj",
+    "adjustment": "adj",
+    "elimination": "adj",
     "parent": "parent",
     "grand": "final",
 }
+
+# Column-A labels that indicate it is a row-index column, not the label column
+_INDEX_COL_HEADERS = {"#", "no", "no.", "s.no", "sr", "sr.no", "row", "item no"}
 
 
 def norm_label(s) -> str:
@@ -42,7 +60,13 @@ def _classify_sheet(name: str):
     return "OTHER", year
 
 
-def _find_header_row(ws, max_scan: int = 15):
+def _find_header_row(ws, max_scan: int = 20) -> int:
+    """Return the row index that most likely contains entity column headers.
+
+    Heuristic: the header row has the MOST non-empty string cells across columns
+    2..max_col (excluding col 1 which may be '#' or row numbers).
+    Ties broken by preferring earlier rows.
+    """
     best_row, best_count = 1, 0
     for r in range(1, min(max_scan, ws.max_row) + 1):
         cnt = 0
@@ -53,6 +77,35 @@ def _find_header_row(ws, max_scan: int = 15):
         if cnt > best_count:
             best_count, best_row = cnt, r
     return best_row
+
+
+def _detect_label_col(ws, header_row: int) -> int:
+    """Return the column index that contains row labels (account / line names).
+
+    Rules:
+    1. If column-1 header is '#', 'No', 'No.' etc. → skip it; label is in col 2.
+    2. Otherwise check: if column-1 data rows are predominantly numbers → label is col 2.
+    3. Default: label is col 1.
+    """
+    col1_header = ws.cell(row=header_row, column=1).value
+    if isinstance(col1_header, str):
+        if col1_header.strip().lower() in _INDEX_COL_HEADERS:
+            return 2
+
+    # Peek at up to 10 data rows in col 1
+    num_count = 0
+    str_count = 0
+    for r in range(header_row + 1, min(header_row + 11, ws.max_row + 1)):
+        v = ws.cell(row=r, column=1).value
+        if isinstance(v, (int, float)):
+            num_count += 1
+        elif isinstance(v, str) and v.strip():
+            str_count += 1
+
+    if num_count > str_count:
+        return 2  # col 1 is numeric index → labels are in col 2
+
+    return 1
 
 
 def _classify_summary_col(header_text: str) -> Optional[str]:
@@ -70,7 +123,8 @@ _CELL_RE = re.compile(r"([A-Z]+)(\d+)")
 def _formula_spans_multiple_rows(formula: str, current_row: int) -> bool:
     """True iff this formula references rows other than the current row.
     Same-row range like =SUM(B10:G10) on row 10 → False (it's a per-row total).
-    Multi-row range like =SUM(B10:B20) → True (it's a subtotal across rows)."""
+    Multi-row range like =SUM(B10:B20) → True (it's a subtotal across rows).
+    """
     if not isinstance(formula, str) or not formula.startswith("="):
         return False
     for m in _RANGE_RE.finditer(formula):
@@ -107,8 +161,10 @@ class RowInfo:
 
 
 class YearSheet:
-    __slots__ = ("sheet_name", "statement", "year", "header_row", "label_col",
-                 "entity_cols", "summary_cols", "data_start", "data_end", "rows")
+    __slots__ = (
+        "sheet_name", "statement", "year", "header_row", "label_col",
+        "entity_cols", "summary_cols", "data_start", "data_end", "rows",
+    )
 
     def __init__(self, sheet_name, statement, year, header_row, label_col,
                  entity_cols, summary_cols, data_start, data_end, rows):
@@ -130,7 +186,7 @@ def discover_sheet(ws) -> Optional[YearSheet]:
         return None
 
     header_row = _find_header_row(ws)
-    label_col = 1
+    label_col = _detect_label_col(ws, header_row)
     data_start = header_row + 1
 
     entity_cols = []
@@ -183,8 +239,12 @@ def discover_sheet(ws) -> Optional[YearSheet]:
         else:
             role = "data"
 
-        rows.append(RowInfo(row_idx=r, label=label, label_norm=ln,
-                            role=role, existing_formula=first_formula))
+        rows.append(
+            RowInfo(
+                row_idx=r, label=label, label_norm=ln,
+                role=role, existing_formula=first_formula,
+            )
+        )
         last_data_row = r
 
     return YearSheet(
@@ -213,6 +273,7 @@ def summarize(sheets: List[YearSheet]) -> dict:
                 "statement": s.statement,
                 "year": s.year,
                 "header_row": s.header_row,
+                "label_col": s.label_col,
                 "n_entities": len(s.entity_cols),
                 "entities": [name for _, name in s.entity_cols],
                 "summary_cols": [{"col": c, "role": r} for c, r in s.summary_cols],
