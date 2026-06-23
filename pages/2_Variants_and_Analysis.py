@@ -232,7 +232,7 @@ _template_sheets_appended = False
 if _target_bytes and _selected_sheets and _year_sheets_meta:
     with st.expander(
         f"⚙️ Template Row Formula Overrides ({len(_year_sheets_meta)} classified template sheet(s))",
-        expanded=False,
+        expanded=st.session_state.get("v2_ro_expander_expanded", False),
     ):
         st.caption(
             "By default, the formulas pull from the auto-detected Pivot tab. "
@@ -318,34 +318,105 @@ if _target_bytes and _selected_sheets and _year_sheets_meta:
                                 new_ro[rk] = val
                             else:
                                 new_ro.pop(rk, None)
-                        st.session_state.row_pivot_overrides = new_ro
-                        
-                        # Save to database immediately if profile is active and DB is online
-                        active_id = st.session_state.get("active_profile_id")
-                        if db_online and active_id:
-                            d = dblib.get_db()
-                            if d is not None:
-                                d.mappings.delete_many({
-                                    "profile_id": P.ObjectId(active_id),
-                                    "statement": "__template_row_override__"
-                                })
-                                for rk_db, val_db in new_ro.items():
-                                    if val_db:
-                                        parts = rk_db.split("|", 1)
-                                        if len(parts) == 2:
-                                            sheet_name, row_idx = parts[0], parts[1]
-                                            P.upsert_mapping(
-                                                profile_id=active_id,
-                                                statement="__template_row_override__",
-                                                breadcrumb=sheet_name,
-                                                qb_account=row_idx,
-                                                target_line=val_db,
-                                                source="manual",
-                                            )
-                                P._invalidate_mapping_cache(active_id)
-                        
-                        st.success("✅ Row-level pivot overrides saved. Re-download to apply.")
+                        st.session_state.pending_row_overrides = new_ro
+                        st.session_state.v2_save_ro_dialog_open = True
+                        st.session_state.v2_ro_expander_expanded = True
                         st.rerun()
+
+                # Save Row Overrides Dialog / Confirmation
+                if st.session_state.get("v2_save_ro_dialog_open"):
+                    st.markdown("---")
+                    with st.container(border=True):
+                        st.markdown("#### 💾 Save Row Formula Overrides to Profile?")
+                        st.write("Do you want to save these template row formula overrides to a profile in MongoDB so they are automatically loaded next time?")
+                        
+                        if db_online:
+                            _profiles_now = P.list_profiles()
+                            CREATE_NEW    = "__CREATE_NEW__"
+                            _pids   = [str(p["_id"]) for p in _profiles_now] + [CREATE_NEW]
+                            _plbls  = [p["name"]     for p in _profiles_now] + ["➕ Create new profile…"]
+
+                            _cur = st.session_state.get("active_profile_id", "")
+                            _def = _pids.index(_cur) if _cur in _pids else 0
+
+                            sel_id = st.selectbox(
+                                "Select profile to save into:",
+                                options=_pids,
+                                format_func=lambda x: _plbls[_pids.index(x)],
+                                index=_def,
+                                key="v2_ro_dialog_sel",
+                            )
+
+                            new_name = ""
+                            if sel_id == CREATE_NEW:
+                                new_name = st.text_input(
+                                    "New profile name",
+                                    placeholder="Enter a name for the new profile…",
+                                    key="v2_ro_dialog_new_name",
+                                )
+                        else:
+                            st.warning("MongoDB is offline. Overrides can only be applied to the current session.")
+                            
+                        c1, c2, c3 = st.columns([1.5, 1.5, 1])
+                        with c1:
+                            if db_online:
+                                if st.button("💾 Save & Apply", type="primary", use_container_width=True, key="v2_ro_save_confirm"):
+                                    tid = ""
+                                    tname = ""
+                                    if sel_id == CREATE_NEW:
+                                        if not new_name.strip():
+                                            st.warning("⚠️ Enter a name for the new profile first.")
+                                            st.stop()
+                                        tid = str(P.create_profile(new_name.strip()))
+                                        tname = new_name.strip()
+                                    else:
+                                        tid = sel_id
+                                        tname = _plbls[_pids.index(sel_id)]
+                                        
+                                    d = dblib.get_db()
+                                    if d is not None:
+                                        d.mappings.delete_many({
+                                            "profile_id": P.ObjectId(tid),
+                                            "statement": "__template_row_override__"
+                                        })
+                                        for rk_db, val_db in st.session_state.pending_row_overrides.items():
+                                            if val_db:
+                                                parts = rk_db.split("|", 1)
+                                                if len(parts) == 2:
+                                                    sheet_name, row_idx = parts[0], parts[1]
+                                                    P.upsert_mapping(
+                                                        profile_id=tid,
+                                                        statement="__template_row_override__",
+                                                        breadcrumb=sheet_name,
+                                                        qb_account=row_idx,
+                                                        target_line=val_db,
+                                                        source="manual",
+                                                    )
+                                        P._invalidate_mapping_cache(tid)
+                                    st.session_state.row_pivot_overrides = st.session_state.pending_row_overrides
+                                    st.session_state.active_profile_id = tid
+                                    st.session_state.loaded_row_overrides_profile_id = tid
+                                    st.session_state.v2_save_ro_dialog_open = False
+                                    st.session_state.v2_ro_expander_expanded = False
+                                    st.session_state.pending_row_overrides = None
+                                    st.success(f"✅ Row-level pivot overrides saved to profile **{tname}**.")
+                                    st.rerun()
+                            else:
+                                st.button("💾 Save & Apply", type="primary", use_container_width=True, disabled=True, key="v2_ro_save_confirm_disabled")
+                        with c2:
+                            if st.button("💻 Apply to Session Only", use_container_width=True, key="v2_ro_apply_session"):
+                                st.session_state.row_pivot_overrides = st.session_state.pending_row_overrides
+                                st.session_state.v2_save_ro_dialog_open = False
+                                st.session_state.v2_ro_expander_expanded = False
+                                st.session_state.pending_row_overrides = None
+                                st.success("✅ Row-level pivot overrides applied to session only.")
+                                st.rerun()
+                        with c3:
+                            if st.button("❌ Cancel", use_container_width=True, key="v2_ro_cancel"):
+                                st.session_state.v2_save_ro_dialog_open = False
+                                st.session_state.v2_ro_expander_expanded = False
+                                st.session_state.pending_row_overrides = None
+                                st.rerun()
             else:
                 st.info("No formula rows found in this sheet.")
 
