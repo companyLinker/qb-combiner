@@ -142,9 +142,12 @@ if st.button("🚀 Generate Linked Workbook", type="primary"):
     st.success("✅ Workbook generated!")
 
     if active_profile:
-        n_auto   = sum(1 for v in mapping.values() if v[1] == "auto")
-        n_manual = sum(1 for v in mapping.values() if v[1] == "manual")
-        n_review = sum(1 for v in mapping.values() if v[1] == "REVIEW")
+        # mapping[key] is a list of (target_line, source, pivot_override); the
+        # first entry is the primary mapping, any extras are duplicate fan-outs.
+        primary_sources = [entries[0][1] for entries in mapping.values() if entries]
+        n_auto   = sum(1 for s in primary_sources if s == "auto")
+        n_manual = sum(1 for s in primary_sources if s == "manual")
+        n_review = sum(1 for s in primary_sources if s == "REVIEW")
         try:
             P.log_run(
                 profile_id=str(active_profile["_id"]),

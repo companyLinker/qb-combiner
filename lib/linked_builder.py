@@ -26,7 +26,7 @@ import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
 
-from .mapping_rules import map_pnl, map_bs
+from .mapping_rules import resolve_target_entries
 from .master_builder import write_pivot_sheets
 from .template_discovery import (
     discover_template, summarize, norm_label, YearSheet, RowInfo,
@@ -302,13 +302,16 @@ def _best_template_row_for(target_line: str, candidates: List[str], threshold: i
 
 def compute_mapping(qb_data, mapping_overrides=None, entity_mapping_overrides=None):
     """Run auto-rules on every leaf QB account, allow overrides. Returns:
-        mapping: dict[(statement, entity, breadcrumb, qb_account)] = (target_line, source)
+        mapping: dict[(statement, entity, breadcrumb, qb_account)] =
+                 list[(target_line, source, pivot_override)]
         pnl_leaves, bs_leaves: dict[(breadcrumb, label)] = {amounts: {entity: $}}
 
-    Lookup priority per entity+account:
+    Lookup priority per entity+account (see mapping_rules.resolve_target_entries):
       1. Entity-specific override  (key: 'E|stmt|entity|bc|lbl')
       2. Generic override          (key: 'stmt|bc|lbl')
       3. Auto-rules
+      4. Any "duplicate" entity-level mappings, appended as extra list entries
+         so one account can fan out into more than one Target Line.
     """
     overrides        = mapping_overrides or {}
     entity_overrides = entity_mapping_overrides or {}
@@ -342,30 +345,15 @@ def compute_mapping(qb_data, mapping_overrides=None, entity_mapping_overrides=No
             if r["is_section_only"] or r["is_total"]:
                 continue
             bc, lbl = r["breadcrumb"], r["label"]
-            entity_key  = f"E|P&L|{entity}|{bc}|{lbl}"
-            generic_key = f"P&L|{bc}|{lbl}"
             mkey = ("P&L", entity, bc, lbl)
-            if entity_key in entity_overrides and entity_overrides[entity_key]:
-                mapping[mkey] = (entity_overrides[entity_key], "entity")
-            elif generic_key in overrides and overrides[generic_key]:
-                mapping[mkey] = (overrides[generic_key], "manual")
-            else:
-                t, c = map_pnl(bc, lbl)
-                mapping[mkey] = (t if t and t != "__SKIP__" else "", c)
+            mapping[mkey] = resolve_target_entries("P&L", entity, bc, lbl, overrides, entity_overrides)
 
         for r in info.get("bs_rows", []):
             if r["is_section_only"] or r["is_total"]:
                 continue
             bc, lbl = r["breadcrumb"], r["label"]
-            entity_key  = f"E|BS|{entity}|{bc}|{lbl}"
-            generic_key = f"BS|{bc}|{lbl}"
             mkey = ("BS", entity, bc, lbl)
-            if entity_key in entity_overrides and entity_overrides[entity_key]:
-                mapping[mkey] = (entity_overrides[entity_key], "entity")
-            elif generic_key in overrides and overrides[generic_key]:
-                mapping[mkey] = (overrides[generic_key], "manual")
-            else:
-                mapping[mkey] = map_bs(bc, lbl)
+            mapping[mkey] = resolve_target_entries("BS", entity, bc, lbl, overrides, entity_overrides)
 
     return mapping, pnl_leaves, bs_leaves
 
@@ -382,38 +370,37 @@ def _write_qb_data_sheet(wb, qb_data, mapping):
     ws.freeze_panes = "A2"
 
     for entity, info in qb_data.items():
-        # Write a "CY" row and (if available) a "PY" row for each leaf
+        # Write a "CY" row and (if available) a "PY" row for each leaf, per
+        # resolved target_line (an account with duplicate mappings writes one
+        # set of rows per target_line so each fans out correctly).
         for r in info.get("pnl_rows", []):
             if r["is_section_only"] or r["is_total"]:
                 continue
-            # Look up entity-specific target first, then generic
-            tgt, _ = mapping.get(("P&L", entity, r["breadcrumb"], r["label"]),
-                       mapping.get(("P&L", r["breadcrumb"], r["label"]), ("", "REVIEW")))
-            # Strip spaces so SUMIFS exact-match works (map_pnl returns indented strings)
-            tgt = (tgt or "").strip()
+            entries = mapping.get(("P&L", entity, r["breadcrumb"], r["label"])) or [("", "REVIEW", "")]
             key = f"P&L|{r['breadcrumb']}|{r['label']}"
             cy = r.get("amount_cy") or r.get("amount") or 0
             py = r.get("amount_py")
-            ws.append(["CY", entity, "P&L", r["breadcrumb"], r["label"], tgt, key, cy])
-            fmt_money(ws.cell(row=ws.max_row, column=8))
-            if py is not None:
-                ws.append(["PY", entity, "P&L", r["breadcrumb"], r["label"], tgt, key, py])
+            for tgt, _src, _po in entries:
+                tgt = (tgt or "").strip()
+                ws.append(["CY", entity, "P&L", r["breadcrumb"], r["label"], tgt, key, cy])
                 fmt_money(ws.cell(row=ws.max_row, column=8))
+                if py is not None:
+                    ws.append(["PY", entity, "P&L", r["breadcrumb"], r["label"], tgt, key, py])
+                    fmt_money(ws.cell(row=ws.max_row, column=8))
         for r in info.get("bs_rows", []):
             if r["is_section_only"] or r["is_total"]:
                 continue
-            tgt, _ = mapping.get(("BS", entity, r["breadcrumb"], r["label"]),
-                       mapping.get(("BS", r["breadcrumb"], r["label"]), ("", "REVIEW")))
-            # Strip spaces so SUMIFS exact-match works
-            tgt = (tgt or "").strip()
+            entries = mapping.get(("BS", entity, r["breadcrumb"], r["label"])) or [("", "REVIEW", "")]
             key = f"BS|{r['breadcrumb']}|{r['label']}"
             cy = r.get("amount_cy") or r.get("amount") or 0
             py = r.get("amount_py")
-            ws.append(["CY", entity, "BS", r["breadcrumb"], r["label"], tgt, key, cy])
-            fmt_money(ws.cell(row=ws.max_row, column=8))
-            if py is not None:
-                ws.append(["PY", entity, "BS", r["breadcrumb"], r["label"], tgt, key, py])
+            for tgt, _src, _po in entries:
+                tgt = (tgt or "").strip()
+                ws.append(["CY", entity, "BS", r["breadcrumb"], r["label"], tgt, key, cy])
                 fmt_money(ws.cell(row=ws.max_row, column=8))
+                if py is not None:
+                    ws.append(["PY", entity, "BS", r["breadcrumb"], r["label"], tgt, key, py])
+                    fmt_money(ws.cell(row=ws.max_row, column=8))
     fit(ws, [6, 28, 6, 50, 35, 35, 60, 16])
     # Hide it from casual view
     ws.sheet_state = "hidden"
@@ -431,9 +418,10 @@ def _write_template_map_sheet(wb, year_sheets, mapping):
 
     # Build reverse index: target_line → list of QB account keys
     by_target = {}
-    for (stmt, entity, bc, lbl), (tgt, src) in mapping.items():
-        if tgt:
-            by_target.setdefault(tgt, []).append((stmt, bc, lbl))
+    for (stmt, entity, bc, lbl), entries in mapping.items():
+        for tgt, src, po in entries:
+            if tgt:
+                by_target.setdefault(tgt, []).append((stmt, bc, lbl))
 
     for ys in year_sheets:
         for row in ys.rows:
@@ -511,12 +499,28 @@ def build_linked_workbook(
         del wb["QB_Data"]
 
     # Write fresh pivot sheets containing the Target Line column (Column C)
-    write_pivot_sheets(wb, qb_data, mapping_overrides, entity_mapping_overrides)
+    pnl_pivot_full, bs_pivot_full = write_pivot_sheets(
+        wb, qb_data, mapping_overrides, entity_mapping_overrides
+    )
     _write_template_map_sheet(wb, year_sheets, mapping)
 
+    # Per-Target-Line pivot-tab preference set via the main mapping table's
+    # "Formula Override" column (either on the original row or a duplicate).
+    # Lower priority than row_pivot_overrides (a specific template row), higher
+    # than sheet_pivot_overrides/auto (see priority chain below).
+    target_line_pivot_overrides: Dict[str, str] = {}
+    for pv in (pnl_pivot_full, bs_pivot_full):
+        for v in pv.values():
+            if v["is_section"] or v["is_total"]:
+                continue
+            tgt = v.get("target_line")
+            po = v.get("pivot_override")
+            if tgt and po and tgt not in target_line_pivot_overrides:
+                target_line_pivot_overrides[tgt] = po
+
     # Available target_lines (from mapping output)
-    pnl_targets = sorted({t for (s, _, _, _), (t, _) in mapping.items() if s == "P&L" and t})
-    bs_targets = sorted({t for (s, _, _, _), (t, _) in mapping.items() if s == "BS" and t})
+    pnl_targets = sorted({t for (s, _, _, _), entries in mapping.items() if s == "P&L" for (t, _, _) in entries if t})
+    bs_targets = sorted({t for (s, _, _, _), entries in mapping.items() if s == "BS" for (t, _, _) in entries if t})
 
     report = {
         "n_year_sheets": len(year_sheets),
@@ -583,10 +587,14 @@ def build_linked_workbook(
                     # Entity not uploaded/found: leave cell untouched
                     continue
 
-                # Apply per-row override if present; otherwise fallback to sheet-level/auto
+                # Priority: per-row override (Template Row Formula Overrides) >
+                # per-Target-Line override (Formula Override column on the main
+                # mapping table) > per-sheet override > auto-detected year filter.
                 row_key = f"{ys.sheet_name}|{row.row_idx}"
                 if row_pivot_overrides and row_pivot_overrides.get(row_key):
                     pivot_sheet_name = row_pivot_overrides[row_key]
+                elif matched_target in target_line_pivot_overrides:
+                    pivot_sheet_name = target_line_pivot_overrides[matched_target]
                 else:
                     sheet_base = "BS Pivot" if ys.statement == "BS" else "P&L Pivot"
                     # Apply per-sheet pivot tab override if provided;

@@ -140,8 +140,14 @@ def collect_leaves():
                 entity_key  = f"E|{stmt_kind}|{entity}|{bc}|{lbl}"
                 generic_key = f"{stmt_kind}|{bc}|{lbl}"
 
-                if entity_key in entity_lookup and entity_lookup[entity_key]:
-                    effective  = entity_lookup[entity_key]
+                # entity_lookup[entity_key] is a list of mapping entries (the
+                # primary row plus any "duplicate" rows added on the Variants &
+                # Analysis page). This page only shows/edits the primary one.
+                _entries = entity_lookup.get(entity_key) or []
+                _primary = next((e for e in _entries if not e.get("dup_id")), None)
+
+                if _primary and (_primary.get("target_line") or "").strip():
+                    effective  = _primary["target_line"]
                     confidence = "entity-saved"
                 elif generic_key in generic_lookup and generic_lookup[generic_key]:
                     effective  = generic_lookup[generic_key]
@@ -272,16 +278,30 @@ if st.session_state.get("p3_save_dialog_open"):
             with oc1:
                 if st.button("✅ Save to session", type="primary",
                              use_container_width=True, key="p3_sess_confirm"):
+                    # entity_mapping_overrides[ekey] is a list of mapping entries
+                    # (primary + any duplicates added on Variants & Analysis).
+                    # This page only edits the primary (dup_id == "") entry.
                     new_ov = dict(entity_session_overrides)
                     n = 0
+                    touched_keys = set()
                     for _, r in edited.iterrows():
                         ekey   = r["entity_key"]
                         chosen = (r["Target Line"] or "").strip()
+
+                        if ekey not in touched_keys:
+                            new_ov[ekey] = [dict(e) for e in entity_lookup.get(ekey, [])]
+                            touched_keys.add(ekey)
+
+                        existing_primary = next(
+                            (e for e in entity_lookup.get(ekey, []) if not e.get("dup_id")), None
+                        )
+                        preserved_po = existing_primary.get("pivot_override", "") if existing_primary else ""
+
+                        entries = new_ov[ekey]
+                        entries[:] = [e for e in entries if e.get("dup_id")]
                         if chosen:
-                            new_ov[ekey] = chosen
+                            entries.append({"dup_id": "", "target_line": chosen, "pivot_override": preserved_po})
                             n += 1
-                        else:
-                            new_ov.pop(ekey, None)
                     st.session_state.entity_mapping_overrides = new_ov
                     st.session_state.p3_save_dialog_open = False
                     st.success(f"✅ Saved {n} overrides to session.")
@@ -337,8 +357,13 @@ if st.session_state.get("p3_save_dialog_open"):
 
                 st.session_state.active_profile_id = tid
 
+                # entity_mapping_overrides[ekey] is a list of mapping entries
+                # (primary + any duplicates added on Variants & Analysis). This
+                # page only touches the primary (dup_id == "") entry, and never
+                # passes pivot_override so an existing override isn't clobbered.
                 new_ov = dict(entity_session_overrides)
                 n = 0
+                touched_keys = set()
                 for _, r in edited.iterrows():
                     ekey   = r["entity_key"]
                     chosen = (r["Target Line"] or "").strip()
@@ -348,8 +373,20 @@ if st.session_state.get("p3_save_dialog_open"):
                     bc_v   = parts[3] if len(parts) >= 4 else ""
                     lbl    = parts[4] if len(parts) >= 5 else ""
 
+                    if ekey not in touched_keys:
+                        new_ov[ekey] = [dict(e) for e in entity_lookup.get(ekey, [])]
+                        touched_keys.add(ekey)
+
+                    existing_primary = next(
+                        (e for e in entity_lookup.get(ekey, []) if not e.get("dup_id")), None
+                    )
+                    preserved_po = existing_primary.get("pivot_override", "") if existing_primary else ""
+
+                    entries = new_ov[ekey]
+                    entries[:] = [e for e in entries if e.get("dup_id")]
+
                     if chosen:
-                        new_ov[ekey] = chosen
+                        entries.append({"dup_id": "", "target_line": chosen, "pivot_override": preserved_po})
                         n += 1
                         if ename:
                             P.upsert_entity_mapping(
@@ -358,7 +395,6 @@ if st.session_state.get("p3_save_dialog_open"):
                                 target_line=chosen, source="manual",
                             )
                     else:
-                        new_ov.pop(ekey, None)
                         if ename:
                             try:
                                 P.delete_entity_mapping(tid, ename, stmt, bc_v, lbl)

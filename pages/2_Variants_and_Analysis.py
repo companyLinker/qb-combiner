@@ -8,6 +8,7 @@ so the user explicitly picks (or creates) a profile every time.
 import io
 import hashlib
 import json
+import uuid
 import streamlit as st
 import openpyxl
 import pandas as pd
@@ -19,6 +20,19 @@ from lib.template_discovery import discover_template
 from lib import db as dblib
 from lib import profiles as P
 from lib.ui import hide_streamlit_elements
+
+
+# Options shared by the Template Row Formula Overrides section and the
+# per-account "Formula Override" column in the main mapping table below.
+PIVOT_OVERRIDE_OPTIONS = [
+    "",
+    "P&L Pivot CY",
+    "P&L Pivot PY",
+    "P&L Pivot Change",
+    "BS Pivot CY",
+    "BS Pivot PY",
+    "BS Pivot Change",
+]
 
 
 # ── Cached helpers (re-run only when inputs change) ───────────────────────────
@@ -250,15 +264,7 @@ if _target_bytes and _selected_sheets and _year_sheets_meta:
         if ys:
             override_rows = []
             existing_ro = st.session_state.get("row_pivot_overrides", {})
-            all_pivot_options = [
-                "",
-                "P&L Pivot CY",
-                "P&L Pivot PY",
-                "P&L Pivot Change",
-                "BS Pivot CY",
-                "BS Pivot PY",
-                "BS Pivot Change"
-            ]
+            all_pivot_options = PIVOT_OVERRIDE_OPTIONS
             for row in ys.rows:
                 if row.role not in ("data", "preloaded"):
                     continue
@@ -500,7 +506,10 @@ with col2:
 st.divider()
 st.markdown("### Map accounts to target template lines")
 st.caption("Each row = one **Company × QB Account**. Set a Target Line per company. "
-           "Sorted by largest $ first.")
+           "Sorted by largest $ first. Check **🧬 Duplicate?** on a row to fan that "
+           "account out to a second Target Line, or **🗑 Remove?** on a duplicate row "
+           "(🧬 DUPLICATE rows are marked in the Row Type column) to delete it — then "
+           "click **⚡ Apply duplicate / remove** below the table.")
 
 if template_loaded:
     st.caption(f"Dropdowns from template: {len(target_lines_pnl)} P&L lines, "
@@ -531,31 +540,63 @@ def make_rows():
                 entity_key  = f"E|{stmt_kind}|{entity}|{bc}|{lbl}"
                 generic_key = f"{stmt_kind}|{bc}|{lbl}"
 
-                if entity_key in entity_lookup and entity_lookup[entity_key]:
-                    effective  = entity_lookup[entity_key]
-                    confidence = "entity-saved"
+                entries     = entity_lookup.get(entity_key) or []
+                primary     = next((e for e in entries if not e.get("dup_id")), None)
+                dup_entries = [e for e in entries if e.get("dup_id")]
+
+                if primary and (primary.get("target_line") or "").strip():
+                    effective       = primary["target_line"]
+                    pivot_override  = primary.get("pivot_override", "")
+                    confidence      = "entity-saved"
                 elif generic_key in generic_lookup and generic_lookup[generic_key]:
-                    effective  = generic_lookup[generic_key]
-                    confidence = "saved"
+                    effective       = generic_lookup[generic_key]
+                    pivot_override  = ""
+                    confidence      = "saved"
                 else:
-                    effective  = auto or ""
-                    confidence = conf
+                    effective       = auto or ""
+                    pivot_override  = ""
+                    confidence      = conf
 
                 amt = (r.get("amount_cy") or r.get("amount") or 0)
 
                 rows.append({
-                    "entity_key":    entity_key,
-                    "generic_key":   generic_key,
-                    "Company Name":  entity,
-                    "Statement":     stmt_kind,
-                    "QB Account":    lbl,
-                    "Parent path":   bc,
-                    "Total $":       amt,
-                    "abs_total":     abs(amt),
-                    "Confidence":    confidence,
-                    "Auto Suggestion": auto or "",
-                    "Target Line":   effective,
+                    "entity_key":       entity_key,
+                    "generic_key":      generic_key,
+                    "dup_id":           "",
+                    "Row Type":         "Original",
+                    "Company Name":     entity,
+                    "Statement":        stmt_kind,
+                    "QB Account":       lbl,
+                    "Parent path":      bc,
+                    "Total $":          amt,
+                    "abs_total":        abs(amt),
+                    "Confidence":       confidence,
+                    "Auto Suggestion":  auto or "",
+                    "Target Line":      effective,
+                    "Formula Override": pivot_override,
+                    "Duplicate?":       False,
+                    "Remove?":          False,
                 })
+
+                for de in dup_entries:
+                    rows.append({
+                        "entity_key":       entity_key,
+                        "generic_key":      generic_key,
+                        "dup_id":           de["dup_id"],
+                        "Row Type":         "🧬 DUPLICATE",
+                        "Company Name":     entity,
+                        "Statement":        stmt_kind,
+                        "QB Account":       lbl,
+                        "Parent path":      bc,
+                        "Total $":          amt,
+                        "abs_total":        abs(amt),
+                        "Confidence":       "duplicate",
+                        "Auto Suggestion":  auto or "",
+                        "Target Line":      de.get("target_line", ""),
+                        "Formula Override": de.get("pivot_override", ""),
+                        "Duplicate?":       False,
+                        "Remove?":          False,
+                    })
     rows.sort(key=lambda r: -r["abs_total"])
     return rows
 
@@ -563,20 +604,21 @@ def make_rows():
 rows = make_rows()
 df   = pd.DataFrame(rows)
 
-# Filters
+# Filters (explicit keys so selections survive reruns triggered by other
+# buttons on this page, e.g. Apply duplicate/remove or Save Mappings)
 chip_c1, chip_c2, chip_c3, chip_c4 = st.columns([2, 2, 2, 4])
 with chip_c1:
     filter_stmt = st.radio("Statement", ["All", "P&L", "BS"],
-                           horizontal=True, label_visibility="collapsed")
+                           horizontal=True, label_visibility="collapsed", key="v2_filter_stmt")
 with chip_c2:
     filter_conf = st.radio("Confidence", ["All", "Need review", "Saved"],
-                           horizontal=True, label_visibility="collapsed")
+                           horizontal=True, label_visibility="collapsed", key="v2_filter_conf")
 with chip_c3:
     companies = ["All"] + sorted(qb_data.keys())
-    filter_co = st.selectbox("Company", companies, label_visibility="collapsed")
+    filter_co = st.selectbox("Company", companies, label_visibility="collapsed", key="v2_filter_co")
 with chip_c4:
     search = st.text_input("Search", "", label_visibility="collapsed",
-                            placeholder="🔍 Search account name...")
+                            placeholder="🔍 Search account name...", key="v2_filter_search")
 
 view = df.copy()
 if filter_stmt == "P&L":
@@ -586,7 +628,7 @@ elif filter_stmt == "BS":
 if filter_conf == "Need review":
     view = view[view["Confidence"] == "REVIEW"]
 elif filter_conf == "Saved":
-    view = view[view["Confidence"].isin(["saved", "entity-saved", "manual"])]
+    view = view[view["Confidence"].isin(["saved", "entity-saved", "manual", "duplicate"])]
 if filter_co != "All":
     view = view[view["Company Name"] == filter_co]
 if search.strip():
@@ -610,9 +652,27 @@ edited = st.data_editor(
     use_container_width=True,
     hide_index=True,
     num_rows="fixed",
+    column_order=[
+        "Row Type", "Duplicate?", "Remove?",
+        "Company Name", "Statement", "QB Account", "Parent path", "Total $",
+        "Confidence", "Auto Suggestion", "Target Line", "Formula Override",
+    ],
     column_config={
         "entity_key":     None,
         "generic_key":    None,
+        "dup_id":         None,
+        "Row Type":       st.column_config.TextColumn(
+            "Row Type", disabled=True, width="small",
+            help="🧬 DUPLICATE rows fan the same account out to an extra Target Line."),
+        "Duplicate?":     st.column_config.CheckboxColumn(
+            "🧬 Duplicate?", width="small", default=False,
+            help="Check, then click 'Apply duplicate / remove' below to create a "
+                 "blank copy of this row so you can map the same account to another "
+                 "Target Line."),
+        "Remove?":        st.column_config.CheckboxColumn(
+            "🗑 Remove?", width="small", default=False,
+            help="Check on a 🧬 DUPLICATE row, then click 'Apply duplicate / remove' "
+                 "below to delete it. Has no effect on Original rows."),
         "Company Name":   st.column_config.TextColumn(disabled=True, width="medium"),
         "Statement":      st.column_config.TextColumn(disabled=True, width="small"),
         "QB Account":     st.column_config.TextColumn(disabled=True, width="medium"),
@@ -624,10 +684,275 @@ edited = st.data_editor(
             "Target Line",
             options=all_targets if all_targets else [""],
             width="medium", required=False),
+        "Formula Override": st.column_config.SelectboxColumn(
+            "Formula Override",
+            options=PIVOT_OVERRIDE_OPTIONS,
+            width="medium", required=False,
+            help="Pin this account's Target Line to a specific pivot tab "
+                 "(P&L/BS Pivot CY, PY, or Change). Leave blank to use the "
+                 "default sheet/auto-detected tab."),
     },
     height=600,
     key="variants_editor_main",
 )
+
+
+def _parse_entity_key(ekey: str):
+    """Split 'E|stmt|entity|breadcrumb|label' -> (statement, entity, breadcrumb, label)."""
+    parts = ekey.split("|", 4)
+    if len(parts) != 5:
+        return "", "", "", ""
+    return parts[1], parts[2], parts[3], parts[4]
+
+
+def _save_rows_to_profile(edited_df, base_overrides, entity_lookup_map, tid=None):
+    """Merge Target Line / Formula Override edits from edited_df into a
+    list-valued entity-mapping-overrides dict. If tid is given, also writes
+    each touched row straight to MongoDB (profile `tid`) — this is the ONE
+    place that path lives, used by Quick Save, the profile-picker dialog, and
+    the Excel bulk-upload path, so they can never drift out of sync with
+    each other.
+
+    Returns (new_overrides_dict, n_saved, errors).
+    """
+    new_ov = dict(base_overrides)
+    touched_keys = set()
+    n = 0
+    errors = []
+    for _, r in edited_df.iterrows():
+        ekey = r.get("entity_key") if hasattr(r, "get") else r["entity_key"]
+        if not ekey:
+            continue
+        did      = (r.get("dup_id") or "") if hasattr(r, "get") else ""
+        chosen   = (r.get("Target Line") or "").strip()
+        pivot_ov = (r.get("Formula Override") or "").strip()
+
+        if ekey not in touched_keys:
+            # Seed with the current effective (DB + prior session) list so
+            # rows hidden by the active filter (or absent from an uploaded
+            # file) aren't dropped.
+            new_ov[ekey] = [dict(e) for e in entity_lookup_map.get(ekey, [])]
+            touched_keys.add(ekey)
+
+        entries = new_ov[ekey]
+        entries[:] = [e for e in entries if (e.get("dup_id") or "") != did]
+
+        if chosen:
+            entries.append({"dup_id": did, "target_line": chosen, "pivot_override": pivot_ov})
+            n += 1
+            if tid:
+                stmt, ename, bc_v, lbl = _parse_entity_key(ekey)
+                if ename:
+                    try:
+                        P.upsert_entity_mapping(
+                            profile_id=tid, entity=ename, statement=stmt,
+                            breadcrumb=bc_v, qb_account=lbl,
+                            target_line=chosen, source="manual",
+                            dup_id=did, pivot_override=pivot_ov,
+                        )
+                    except Exception as e:
+                        errors.append(f"{ename} / {lbl}: {e}")
+        elif tid:
+            stmt, ename, bc_v, lbl = _parse_entity_key(ekey)
+            if ename:
+                try:
+                    P.delete_entity_mapping(tid, ename, stmt, bc_v, lbl, dup_id=did)
+                except Exception as e:
+                    errors.append(f"{ename} / {lbl} (remove): {e}")
+    return new_ov, n, errors
+
+
+# ── Apply duplicate / remove — inline, immediate, no profile dialog ──────────
+apply_col, apply_hint_col = st.columns([1, 3])
+with apply_col:
+    apply_clicked = st.button(
+        "⚡ Apply duplicate / remove", use_container_width=True, key="v2_apply_dup_btn",
+    )
+with apply_hint_col:
+    st.caption(
+        "Applies immediately to this session (and deletes any checked "
+        "duplicate from the profile right away). Whatever Target Line / "
+        "Formula Override you've already typed above is kept — you still "
+        "need **💾 Save Mappings** below to persist everything to the profile."
+    )
+
+if apply_clicked:
+    new_session   = dict(st.session_state.get("entity_mapping_overrides", {}))
+    touched_keys  = set()
+    n_dup, n_rem  = 0, 0
+    dup_errors    = []
+    active_id_now = st.session_state.get("active_profile_id")
+
+    for _, r in edited.iterrows():
+        ekey     = r["entity_key"]
+        did      = r.get("dup_id", "") or ""
+        chosen   = (r["Target Line"] or "").strip()
+        pivot_ov = (r.get("Formula Override", "") or "").strip()
+        want_dup = bool(r.get("Duplicate?"))
+        want_rem = bool(r.get("Remove?"))
+
+        if ekey not in touched_keys:
+            # Seed with the current effective (DB + prior session) list so
+            # rows hidden by the active filter aren't dropped.
+            new_session[ekey] = [dict(e) for e in entity_lookup.get(ekey, [])]
+            touched_keys.add(ekey)
+
+        entries = new_session[ekey]
+        entries[:] = [e for e in entries if (e.get("dup_id") or "") != did]
+
+        if want_rem and did:
+            n_rem += 1
+            if db_online and active_id_now:
+                stmt_v, ename_v, bc_v, lbl_v = _parse_entity_key(ekey)
+                if ename_v:
+                    try:
+                        P.delete_entity_mapping(active_id_now, ename_v, stmt_v, bc_v, lbl_v, dup_id=did)
+                        P._invalidate_mapping_cache(active_id_now)
+                    except Exception as e:
+                        dup_errors.append(f"{ename_v} / {lbl_v}: {e}")
+        elif did or chosen:
+            # Keep the row (blank duplicates are kept too, so the user can
+            # come back and fill in the Target Line before saving).
+            entries.append({"dup_id": did, "target_line": chosen, "pivot_override": pivot_ov})
+
+        if want_dup:
+            n_dup += 1
+            entries.append({"dup_id": uuid.uuid4().hex[:8], "target_line": "", "pivot_override": ""})
+
+    st.session_state.entity_mapping_overrides = new_session
+
+    if dup_errors:
+        st.error("Some duplicates could not be removed from the profile: " + "; ".join(dup_errors))
+    if n_dup or n_rem:
+        st.success(
+            f"✅ Applied: {n_dup} row(s) duplicated, {n_rem} duplicate(s) removed. "
+            "New duplicate rows appear below with a blank Target Line — fill them "
+            "in, then click 💾 Save Mappings to persist to the profile."
+        )
+        st.rerun()
+    else:
+        st.info("No 🧬 Duplicate or 🗑 Remove checkboxes were checked.")
+
+# ── Quick Save — persists straight to the active profile, no dialog ─────────
+st.divider()
+qs_col, qs_hint_col = st.columns([1, 3])
+_active_id_for_qs = st.session_state.get("active_profile_id")
+with qs_col:
+    quick_save_clicked = st.button(
+        "⚡ Quick Save (active profile)", type="primary", use_container_width=True,
+        key="v2_quick_save_btn", disabled=not (db_online and _active_id_for_qs),
+    )
+with qs_hint_col:
+    if db_online and _active_id_for_qs:
+        st.caption(
+            f"Saves every Target Line / Formula Override above straight to profile "
+            f"**{active_profile['name'] if active_profile else _active_id_for_qs}** — "
+            "immediately, no profile picker. Use 💾 Save Mappings below instead if "
+            "you want to switch or create a profile."
+        )
+    else:
+        st.caption(
+            "Pick or create a profile first (💾 Save Mappings below) to enable Quick Save."
+        )
+
+if quick_save_clicked:
+    new_ov, n_saved, save_errors = _save_rows_to_profile(
+        edited, entity_session_overrides, entity_lookup, tid=_active_id_for_qs,
+    )
+    st.session_state.entity_mapping_overrides = new_ov
+    if save_errors:
+        st.error(
+            "⚠️ Saved to session, but some database writes failed:\n\n"
+            + "\n".join(f"- {e}" for e in save_errors)
+        )
+    else:
+        st.success(f"✅ Quick-saved {n_saved} mappings directly to the active profile.")
+    st.rerun()
+
+# ── Bulk edit via Excel — download the table, edit offline, re-upload ───────
+st.divider()
+st.markdown("##### 📥 Bulk edit via Excel")
+st.caption(
+    "Download the table currently shown above as a real .xlsx workbook, edit "
+    "**Target Line** / **Formula Override** in Excel, then upload it back to "
+    "replace those columns in this session in one shot. (Streamlit's own small "
+    "download icon in the table's toolbar only exports CSV — use the button "
+    "below instead for an Excel file.)"
+)
+
+_EXPORT_COLUMNS = [
+    "Row Type", "Company Name", "Statement", "QB Account", "Parent path",
+    "Total $", "Confidence", "Auto Suggestion", "Target Line", "Formula Override",
+    "entity_key", "dup_id",
+]
+
+
+@st.cache_data(show_spinner=False, max_entries=4)
+def _cached_mapping_excel(rows_hash: str, _export_df: pd.DataFrame) -> bytes:
+    """Write the mapping table to an .xlsx as plain values — no styling/formula
+    overhead — so it stays fast even for large tables. Cached by content hash
+    so unrelated reruns (e.g. a filter chip click elsewhere) don't pay to
+    regenerate the file."""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Mapping"
+    ws.append(_EXPORT_COLUMNS)
+    for row in _export_df[_EXPORT_COLUMNS].itertuples(index=False, name=None):
+        ws.append(list(row))
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf.getvalue()
+
+
+def _rows_hash(export_df: pd.DataFrame) -> str:
+    """Fast vectorized row hash (pandas' own C-accelerated hasher) — much
+    cheaper than json.dumps for a wide table."""
+    return hashlib.md5(
+        pd.util.hash_pandas_object(export_df[_EXPORT_COLUMNS], index=False).values.tobytes()
+    ).hexdigest()
+
+
+exp_col1, exp_col2 = st.columns([1, 3])
+with exp_col1:
+    st.download_button(
+        "⬇ Download Excel",
+        _cached_mapping_excel(_rows_hash(edited), edited),
+        "mapping_table.xlsx",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+        key="v2_export_excel_btn",
+    )
+
+uploaded_mapping_file = st.file_uploader(
+    "Upload edited mapping_table.xlsx",
+    type=["xlsx"], key="v2_mapping_upload",
+)
+if uploaded_mapping_file is not None:
+    if st.button("🔁 Replace table from upload", type="primary", key="v2_apply_upload_btn"):
+        try:
+            up_df = pd.read_excel(uploaded_mapping_file, dtype=str, engine="openpyxl").fillna("")
+        except Exception as e:
+            st.error(f"Could not read that file: {e}")
+        else:
+            missing = {"entity_key", "dup_id", "Target Line", "Formula Override"} - set(up_df.columns)
+            if missing:
+                st.error(
+                    "That file is missing required columns: "
+                    f"{', '.join(sorted(missing))}. Upload the file exactly as "
+                    "downloaded above, only editing Target Line / Formula Override."
+                )
+            else:
+                new_ov, n_up, up_errors = _save_rows_to_profile(
+                    up_df, entity_session_overrides, entity_lookup, tid=None,
+                )
+                st.session_state.entity_mapping_overrides = new_ov
+                st.success(
+                    f"✅ Replaced {n_up} row(s) from the uploaded file into this session. "
+                    "Review below, then click ⚡ Quick Save or 💾 Save Mappings to persist "
+                    "to the profile and include it in the generated workbooks."
+                )
+                st.rerun()
 
 # ── Save — dialog appears every time ──────────────────────────────────────────
 st.divider()
@@ -658,16 +983,9 @@ if st.session_state.get("v2_save_dialog_open"):
             with oc1:
                 if st.button("✅ Save to session", type="primary",
                              use_container_width=True, key="v2_sess_confirm"):
-                    new_ov = dict(entity_session_overrides)
-                    n = 0
-                    for _, r in edited.iterrows():
-                        ekey   = r["entity_key"]
-                        chosen = (r["Target Line"] or "").strip()
-                        if chosen:
-                            new_ov[ekey] = chosen
-                            n += 1
-                        else:
-                            new_ov.pop(ekey, None)
+                    new_ov, n, _errs = _save_rows_to_profile(
+                        edited, entity_session_overrides, entity_lookup, tid=None,
+                    )
                     st.session_state.entity_mapping_overrides = new_ov
                     st.session_state.v2_save_dialog_open = False
                     st.success(f"✅ Saved {n} overrides to session.")
@@ -723,62 +1041,51 @@ if st.session_state.get("v2_save_dialog_open"):
 
                 st.session_state.active_profile_id = tid
 
-                new_ov = dict(entity_session_overrides)
-                n = 0
-                for _, r in edited.iterrows():
-                    ekey   = r["entity_key"]
-                    chosen = (r["Target Line"] or "").strip()
-                    parts  = ekey.split("|", 4)
-                    ename  = parts[2] if len(parts) == 5 else ""
-                    stmt   = parts[1] if len(parts) >= 2 else ""
-                    bc_v   = parts[3] if len(parts) >= 4 else ""
-                    lbl    = parts[4] if len(parts) >= 5 else ""
+                new_ov, n, save_errors = _save_rows_to_profile(
+                    edited, entity_session_overrides, entity_lookup, tid=tid,
+                )
 
-                    if chosen:
-                        new_ov[ekey] = chosen
-                        n += 1
-                        if ename:
-                            P.upsert_entity_mapping(
-                                profile_id=tid, entity=ename, statement=stmt,
-                                breadcrumb=bc_v, qb_account=lbl,
-                                target_line=chosen, source="manual",
-                            )
-                    else:
-                        new_ov.pop(ekey, None)
-                        if ename:
-                            try:
-                                P.delete_entity_mapping(tid, ename, stmt, bc_v, lbl)
-                            except Exception:
-                                pass
-
+                # Persist to session regardless of any per-row DB failures above,
+                # so a single bad write can't silently wipe out everything else
+                # the user just edited.
                 st.session_state.entity_mapping_overrides = new_ov
-                
+
                 # Save row-level pivot overrides
                 if db_online:
-                    d = dblib.get_db()
-                    if d is not None:
-                        d.mappings.delete_many({
-                            "profile_id": P.ObjectId(tid),
-                            "statement": "__template_row_override__"
-                        })
-                        for rk, val in st.session_state.get("row_pivot_overrides", {}).items():
-                            if val:
-                                parts = rk.split("|", 1)
-                                if len(parts) == 2:
-                                    sheet_name, row_idx = parts[0], parts[1]
-                                    P.upsert_mapping(
-                                        profile_id=tid,
-                                        statement="__template_row_override__",
-                                        breadcrumb=sheet_name,
-                                        qb_account=row_idx,
-                                        target_line=val,
-                                        source="manual",
-                                    )
-                        P._invalidate_mapping_cache(tid)
+                    try:
+                        d = dblib.get_db()
+                        if d is not None:
+                            d.mappings.delete_many({
+                                "profile_id": P.ObjectId(tid),
+                                "statement": "__template_row_override__"
+                            })
+                            for rk, val in st.session_state.get("row_pivot_overrides", {}).items():
+                                if val:
+                                    parts = rk.split("|", 1)
+                                    if len(parts) == 2:
+                                        sheet_name, row_idx = parts[0], parts[1]
+                                        P.upsert_mapping(
+                                            profile_id=tid,
+                                            statement="__template_row_override__",
+                                            breadcrumb=sheet_name,
+                                            qb_account=row_idx,
+                                            target_line=val,
+                                            source="manual",
+                                        )
+                            P._invalidate_mapping_cache(tid)
+                    except Exception as e:
+                        save_errors.append(f"row formula overrides: {e}")
                 st.session_state.loaded_row_overrides_profile_id = tid
 
                 st.session_state.v2_save_dialog_open = False
-                st.success(f"✅ Saved {n} per-company mappings and template row formula overrides to profile **{tname}**.")
+                if save_errors:
+                    st.error(
+                        "⚠️ Saved to session, but some database writes failed — these "
+                        "will NOT survive a page reload until fixed:\n\n"
+                        + "\n".join(f"- {e}" for e in save_errors)
+                    )
+                else:
+                    st.success(f"✅ Saved {n} per-company mappings and template row formula overrides to profile **{tname}**.")
                 st.rerun()
 
 st.divider()

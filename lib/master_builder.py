@@ -10,7 +10,7 @@ from openpyxl.cell.cell import MergedCell
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
-from .mapping_rules import map_pnl, map_bs
+from .mapping_rules import resolve_target_entries
 
 
 HDR_FILL = PatternFill("solid", fgColor="1F3864")
@@ -98,39 +98,60 @@ def norm(s):
     return re.sub(r"\s+", " ", s).strip()
 
 
-def build_pivot(rows_by_entity, entities):
+def build_pivot(rows_by_entity, entities, resolver=None):
+    """Group QB leaf rows into pivot rows.
+
+    resolver(entity, breadcrumb, label) -> list[(target_line, pivot_override)]
+    When given, a leaf account fans out into one pivot row per distinct
+    target_line it resolves to (normally one; more if the account has
+    "duplicate" mappings), each row keyed by (breadcrumb, label, target_line).
+    When resolver is None, behaves exactly as before: one row per
+    (breadcrumb, label), with no target_line/pivot_override info.
+    """
     seen = OrderedDict()
+
+    def targets_for(e, r):
+        if resolver is None or r["is_total"] or r["is_section_only"]:
+            return [("", "")]
+        return resolver(e, r["breadcrumb"], r["label"]) or [("", "")]
+
+    def new_row(r, tgt, po):
+        return {"indent": r["indent"], "is_total": r["is_total"],
+                "is_section": r["is_section_only"],
+                "breadcrumb": r["breadcrumb"], "label": r["label"],
+                "target_line": tgt, "pivot_override": po,
+                "amounts": {}, "amounts_cy": {}, "amounts_py": {}, "amounts_change": {}}
+
     order_src = max(entities, key=lambda e: len(rows_by_entity[e]))
 
-    def key(r): return (r["breadcrumb"], r["label"])
-
+    # Seed with the largest entity's rows first (using only its primary
+    # target) so the common, non-duplicated case keeps its existing row order.
     for r in rows_by_entity[order_src]:
-        seen[key(r)] = {"indent": r["indent"], "is_total": r["is_total"],
-                        "is_section": r["is_section_only"],
-                        "breadcrumb": r["breadcrumb"], "label": r["label"],
-                        "amounts": {}, "amounts_cy": {}, "amounts_py": {}, "amounts_change": {}}
+        tgt, po = targets_for(order_src, r)[0]
+        k = (r["breadcrumb"], r["label"], tgt)
+        if k not in seen:
+            seen[k] = new_row(r, tgt, po)
+
     for e in entities:
         for r in rows_by_entity[e]:
-            k = key(r)
-            if k not in seen:
-                seen[k] = {"indent": r["indent"], "is_total": r["is_total"],
-                           "is_section": r["is_section_only"],
-                           "breadcrumb": r["breadcrumb"], "label": r["label"],
-                           "amounts": {}, "amounts_cy": {}, "amounts_py": {}, "amounts_change": {}}
-    for e in entities:
-        for r in rows_by_entity[e]:
-            k = key(r)
             cy = r.get("amount_cy") if r.get("amount_cy") is not None else r.get("amount")
             py = r.get("amount_py")
             change = r.get("change")
-            
-            if cy is not None:
-                seen[k]["amounts_cy"][e] = seen[k]["amounts_cy"].get(e, 0) + (cy or 0)
-                seen[k]["amounts"][e] = seen[k]["amounts_cy"][e]
-            if py is not None:
-                seen[k]["amounts_py"][e] = seen[k]["amounts_py"].get(e, 0) + (py or 0)
-            if change is not None:
-                seen[k]["amounts_change"][e] = seen[k]["amounts_change"].get(e, 0) + (change or 0)
+
+            for tgt, po in targets_for(e, r):
+                k = (r["breadcrumb"], r["label"], tgt)
+                if k not in seen:
+                    seen[k] = new_row(r, tgt, po)
+                elif po and not seen[k]["pivot_override"]:
+                    seen[k]["pivot_override"] = po
+
+                if cy is not None:
+                    seen[k]["amounts_cy"][e] = seen[k]["amounts_cy"].get(e, 0) + (cy or 0)
+                    seen[k]["amounts"][e] = seen[k]["amounts_cy"][e]
+                if py is not None:
+                    seen[k]["amounts_py"][e] = seen[k]["amounts_py"].get(e, 0) + (py or 0)
+                if change is not None:
+                    seen[k]["amounts_change"][e] = seen[k]["amounts_change"].get(e, 0) + (change or 0)
     return seen
 
 
@@ -139,23 +160,14 @@ def write_pivot_sheets(wb, data, mapping_overrides=None, entity_mapping_override
     overrides = mapping_overrides or {}
     entity_overrides = entity_mapping_overrides or {}
 
-    pnl_pivot = build_pivot({e: data[e]["pnl_rows"] for e in entities}, entities)
-    bs_pivot = build_pivot({e: data[e]["bs_rows"] for e in entities}, entities)
+    def resolve_targets(stmt_kind, e, bc, lbl):
+        entries = resolve_target_entries(stmt_kind, e, bc, lbl, overrides, entity_overrides)
+        return [(t, po) for (t, _src, po) in entries]
 
-    def get_row_target_line(stmt_kind, bc, lbl):
-        for e in entities:
-            entity_key = f"E|{stmt_kind}|{e}|{bc}|{lbl}"
-            if entity_key in entity_overrides and entity_overrides[entity_key]:
-                return entity_overrides[entity_key].strip()
-        generic_key = f"{stmt_kind}|{bc}|{lbl}"
-        if generic_key in overrides and overrides[generic_key]:
-            return overrides[generic_key].strip()
-        if stmt_kind == "P&L":
-            t, _ = map_pnl(bc, lbl)
-            return (t or "").strip()
-        else:
-            t, _ = map_bs(bc, lbl)
-            return (t or "").strip()
+    pnl_pivot = build_pivot({e: data[e]["pnl_rows"] for e in entities}, entities,
+                             resolver=lambda e, bc, lbl: resolve_targets("P&L", e, bc, lbl))
+    bs_pivot = build_pivot({e: data[e]["bs_rows"] for e in entities}, entities,
+                            resolver=lambda e, bc, lbl: resolve_targets("BS", e, bc, lbl))
 
     def write_pivot(sheet_base_name, pivot, stmt_kind):
         tables_to_write = [
@@ -187,11 +199,10 @@ def write_pivot_sheets(wb, data, mapping_overrides=None, entity_mapping_override
                 total = sum(x for x in values if isinstance(x, (int, float)))
                 n_rep = sum(1 for x in values if isinstance(x, (int, float)) and x != 0)
                 
-                # CRITICAL: strip the target line so Excel SUMIFS exact-match works.
-                # map_pnl/map_bs return strings with leading spaces (e.g. "    RETAIL SALES")
-                # but template labels in cells are plain stripped text.
-                tgt_line = "" if v["is_section"] or v["is_total"] else get_row_target_line(stmt_kind, v["breadcrumb"], v["label"])
-                
+                # Target line was already resolved (and stripped) by build_pivot's
+                # resolver, so Excel SUMIFS exact-match against template labels works.
+                tgt_line = v.get("target_line", "")
+
                 ws.append([v["breadcrumb"], v["label"], tgt_line, v["indent"], row_type] + values + [total, n_rep])
                 rno = ws.max_row
 
@@ -215,6 +226,8 @@ def write_pivot_sheets(wb, data, mapping_overrides=None, entity_mapping_override
 
     write_pivot("P&L Pivot", pnl_pivot, "P&L")
     write_pivot("BS Pivot", bs_pivot, "BS")
+
+    return pnl_pivot, bs_pivot
 
 
 def build_master_workbook(data, year_guess="2025", mapping_overrides=None, entity_mapping_overrides=None):

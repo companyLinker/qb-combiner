@@ -179,9 +179,28 @@ ENTITY_KEY_PREFIX = "E|"
 
 def upsert_entity_mapping(profile_id: str, entity: str, statement: str,
                            breadcrumb: str, qb_account: str, target_line: str,
-                           source: str = "manual", updated_by: str = ""):
-    """Save a per-company account → target-line override."""
+                           source: str = "manual", updated_by: str = "",
+                           dup_id: str = "", pivot_override: Optional[str] = None):
+    """Save a per-company account → target-line override.
+
+    dup_id identifies which mapping "slot" this is: "" is the primary/original
+    row; a non-empty dup_id is one of the account's duplicated rows, allowing
+    the same account to fan out into more than one Target Line.
+
+    pivot_override, when not None, pins this row's formula to a specific
+    pivot tab (e.g. "BS Pivot PY"). Passing None (the default) leaves any
+    previously-saved pivot_override untouched — callers unaware of the
+    feature (e.g. Page 3) never clobber it.
+    """
     d = _ensure_db()
+    set_fields = {
+        "target_line": target_line,
+        "source": source,
+        "updated_at": dblib.now(),
+        "updated_by": updated_by,
+    }
+    if pivot_override is not None:
+        set_fields["pivot_override"] = pivot_override
     d.entity_mappings.update_one(
         {
             "profile_id": ObjectId(profile_id),
@@ -189,20 +208,16 @@ def upsert_entity_mapping(profile_id: str, entity: str, statement: str,
             "statement": statement,
             "breadcrumb": breadcrumb,
             "qb_account": qb_account,
+            "dup_id": dup_id,
         },
-        {"$set": {
-            "target_line": target_line,
-            "source": source,
-            "updated_at": dblib.now(),
-            "updated_by": updated_by,
-        }},
+        {"$set": set_fields},
         upsert=True,
     )
     _invalidate_mapping_cache(profile_id)
 
 
 def delete_entity_mapping(profile_id: str, entity: str, statement: str,
-                           breadcrumb: str, qb_account: str):
+                           breadcrumb: str, qb_account: str, dup_id: str = ""):
     d = _ensure_db()
     d.entity_mappings.delete_one({
         "profile_id": ObjectId(profile_id),
@@ -210,12 +225,16 @@ def delete_entity_mapping(profile_id: str, entity: str, statement: str,
         "statement": statement,
         "breadcrumb": breadcrumb,
         "qb_account": qb_account,
+        "dup_id": dup_id,
     })
     _invalidate_mapping_cache(profile_id)
 
 
 def entity_mapping_lookup(profile_id: str) -> dict:
-    """Return dict keyed by 'E|{stmt}|{entity}|{bc}|{lbl}' → target_line.
+    """Return dict keyed by 'E|{stmt}|{entity}|{bc}|{lbl}' → list of
+    {"dup_id": str, "target_line": str, "pivot_override": str} entries.
+    The primary/original mapping has dup_id == ""; any additional entries
+    are duplicate rows fanning this account out to extra Target Lines.
     Cached in-process with 60s TTL; invalidated on any write in this process."""
     now = time.monotonic()
     cached = _ENTITY_MAPPING_CACHE.get(profile_id)
@@ -224,7 +243,7 @@ def entity_mapping_lookup(profile_id: str) -> dict:
     d = dblib.get_db()
     if d is None:
         return {}
-    out = {}
+    out: dict = {}
     for m in d.entity_mappings.find({"profile_id": ObjectId(profile_id)}):
         stmt = m.get("statement")
         ent = m.get("entity")
@@ -233,7 +252,11 @@ def entity_mapping_lookup(profile_id: str) -> dict:
         target_line = m.get("target_line")
         if stmt and ent and qb_acc and target_line is not None:
             key = f"{ENTITY_KEY_PREFIX}{stmt}|{ent}|{bc}|{qb_acc}"
-            out[key] = target_line
+            out.setdefault(key, []).append({
+                "dup_id": m.get("dup_id") or "",
+                "target_line": target_line,
+                "pivot_override": m.get("pivot_override") or "",
+            })
     _ENTITY_MAPPING_CACHE[profile_id] = (now, out)
     return out
 

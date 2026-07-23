@@ -420,6 +420,52 @@ def map_pnl(breadcrumb, label):
     return None, "REVIEW"
 
 
+def resolve_target_entries(stmt_kind, entity, breadcrumb, label,
+                            overrides=None, entity_overrides=None):
+    """Resolve the list of (target_line, source, pivot_override) for one
+    entity's QB leaf account.
+
+    Normally returns exactly one entry (entity override > generic override >
+    auto-rule, same priority as before). If the entity has "duplicate" rows
+    (created via the Variants & Analysis "Duplicate row" control), one extra
+    entry is appended per duplicate with a non-blank target line, so the same
+    account's amount fans out into multiple Target Lines.
+
+    entity_overrides[entity_key] is a list of
+    {"dup_id": str, "target_line": str, "pivot_override": str} dicts, where
+    the primary/original mapping has dup_id == "".
+    """
+    overrides = overrides or {}
+    entity_overrides = entity_overrides or {}
+    entity_key  = f"E|{stmt_kind}|{entity}|{breadcrumb}|{label}"
+    generic_key = f"{stmt_kind}|{breadcrumb}|{label}"
+
+    entries = entity_overrides.get(entity_key) or []
+    primary = next((e for e in entries if not e.get("dup_id")), None)
+    dups    = [e for e in entries if e.get("dup_id")]
+
+    results = []
+    if primary and (primary.get("target_line") or "").strip():
+        results.append((
+            (primary["target_line"] or "").strip(),
+            "entity",
+            (primary.get("pivot_override") or "").strip(),
+        ))
+    elif generic_key in overrides and overrides[generic_key]:
+        results.append((overrides[generic_key].strip(), "manual", ""))
+    else:
+        fn = map_pnl if stmt_kind == "P&L" else map_bs
+        t, c = fn(breadcrumb, label)
+        results.append(((t or "").strip() if t != "__SKIP__" else "", c, ""))
+
+    for d in dups:
+        tl = (d.get("target_line") or "").strip()
+        if tl:
+            results.append((tl, "entity-dup", (d.get("pivot_override") or "").strip()))
+
+    return results
+
+
 @lru_cache(maxsize=8192)
 def map_bs(breadcrumb, label):
     """Return (target_line, confidence) for a Balance Sheet leaf account."""
