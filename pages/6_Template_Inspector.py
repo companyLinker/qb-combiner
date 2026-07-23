@@ -63,7 +63,7 @@ for ys in year_sheets:
         st.dataframe(
             [{"Column": chr(64 + c) if c < 27 else "AB"[c - 27], "Header": h}
              for c, h in ys.entity_cols],
-            use_container_width=True, hide_index=True,
+            width="stretch", hide_index=True,
         )
 
         if ys.summary_cols:
@@ -71,7 +71,7 @@ for ys in year_sheets:
             st.dataframe(
                 [{"Column": chr(64 + c) if c < 27 else "A" + chr(64 + c - 26), "Role": r}
                  for c, r in ys.summary_cols],
-                use_container_width=True, hide_index=True,
+                width="stretch", hide_index=True,
             )
 
         st.markdown("**Row breakdown**")
@@ -85,6 +85,6 @@ for ys in year_sheets:
                 }
                 for r in ys.rows
             ],
-            use_container_width=True, hide_index=True,
+            width="stretch", hide_index=True,
             height=min(400, 50 + len(ys.rows) * 26),
         )

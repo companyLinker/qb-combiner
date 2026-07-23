@@ -152,4 +152,4 @@ if runs:
             "REVIEW": r["review_count"],
             "Output": r.get("output_filename", "—"),
         })
-    st.dataframe(table, use_container_width=True, hide_index=True)
+    st.dataframe(table, width="stretch", hide_index=True)

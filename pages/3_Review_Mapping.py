@@ -228,7 +228,7 @@ if not all_targets or all_targets == [""]:
 
 edited = st.data_editor(
     view,
-    use_container_width=True,
+    width="stretch",
     hide_index=True,
     num_rows="fixed",
     column_config={
@@ -258,7 +258,7 @@ if "p3_save_dialog_open" not in st.session_state:
 save_col, hint_col = st.columns([1, 3])
 with save_col:
     if st.button("💾 Save Overrides", type="primary",
-                 use_container_width=True, key="p3_save_btn"):
+                 width="stretch", key="p3_save_btn"):
         st.session_state.p3_save_dialog_open = True
 with hint_col:
     if db_online:
@@ -277,7 +277,7 @@ if st.session_state.get("p3_save_dialog_open"):
             oc1, oc2 = st.columns([1, 1])
             with oc1:
                 if st.button("✅ Save to session", type="primary",
-                             use_container_width=True, key="p3_sess_confirm"):
+                             width="stretch", key="p3_sess_confirm"):
                     # entity_mapping_overrides[ekey] is a list of mapping entries
                     # (primary + any duplicates added on Variants & Analysis).
                     # This page only edits the primary (dup_id == "") entry.
@@ -307,7 +307,7 @@ if st.session_state.get("p3_save_dialog_open"):
                     st.success(f"✅ Saved {n} overrides to session.")
                     st.rerun()
             with oc2:
-                if st.button("❌ Cancel", use_container_width=True, key="p3_sess_cancel"):
+                if st.button("❌ Cancel", width="stretch", key="p3_sess_cancel"):
                     st.session_state.p3_save_dialog_open = False
                     st.rerun()
         else:
@@ -338,9 +338,9 @@ if st.session_state.get("p3_save_dialog_open"):
             bc1, bc2 = st.columns([1, 1])
             with bc1:
                 confirm = st.button("✅ Confirm Save", type="primary",
-                                    use_container_width=True, key="p3_confirm")
+                                    width="stretch", key="p3_confirm")
             with bc2:
-                if st.button("❌ Cancel", use_container_width=True, key="p3_cancel"):
+                if st.button("❌ Cancel", width="stretch", key="p3_cancel"):
                     st.session_state.p3_save_dialog_open = False
                     st.rerun()
 

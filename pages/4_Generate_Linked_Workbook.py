@@ -95,7 +95,7 @@ with cfg_col2:
             })
         st.dataframe(
             pd.DataFrame(map_rows),
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
             column_config={
                 "Template Column": st.column_config.TextColumn(width="large"),
@@ -166,7 +166,7 @@ if "linked_buf" in st.session_state:
         "02_LINKED_Combination.xlsx",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         type="primary",
-        use_container_width=True,
+        width="stretch",
     )
 
     report = st.session_state.linked_report
@@ -184,4 +184,4 @@ if "linked_buf" in st.session_state:
 
     if report["rows_unmapped"]:
         with st.expander(f"⚠️ Rows with no QB target match ({len(report['rows_unmapped'])})"):
-            st.dataframe(report["rows_unmapped"], use_container_width=True, hide_index=True)
+            st.dataframe(report["rows_unmapped"], width="stretch", hide_index=True)

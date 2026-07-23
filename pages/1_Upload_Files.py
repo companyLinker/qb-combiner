@@ -19,6 +19,18 @@ st.title("📂 Step 1 — Upload Files")
 # ── Profile selector at the TOP ───────────────────────────────────────────────
 db_online = dblib.is_connected()
 
+# Auto-load most recent profile if none selected — this MUST run before the
+# selectbox below is created. Doing it after (as this page previously did)
+# means the selectbox's persisted widget value ("" from its first render)
+# permanently disagrees with a session_state.active_profile_id that gets set
+# out from under it every run, so `chosen_id != current_id` is true forever,
+# triggering `st.rerun()` on every single run — the script never reaches
+# anything below this block (file parsing, Template Configuration, etc.).
+if db_online and not st.session_state.get("active_profile_id"):
+    refreshed_profiles = P.list_profiles()
+    if refreshed_profiles:
+        st.session_state.active_profile_id = str(refreshed_profiles[0]["_id"])
+
 if db_online:
     all_profiles = P.list_profiles()
     with st.container(border=True):
@@ -50,7 +62,7 @@ if db_online:
             st.write("")
             st.write("")
             if st.button("Create & activate", key="p1_create_profile_btn",
-                         use_container_width=True, type="secondary"):
+                         width="stretch", type="secondary"):
                 if new_profile_name.strip():
                     new_id = P.create_profile(new_profile_name.strip())
                     st.session_state.active_profile_id = str(new_id)
@@ -60,12 +72,6 @@ if db_online:
                     st.warning("Enter a name first.")
 else:
     st.warning(f"MongoDB unavailable — session-only mode. ({dblib.connection_error()})")
-
-# Auto-load most recent profile if none selected
-if db_online and not st.session_state.get("active_profile_id"):
-    refreshed_profiles = P.list_profiles()
-    if refreshed_profiles:
-        st.session_state.active_profile_id = str(refreshed_profiles[0]["_id"])
 
 # Resolve active profile for display
 active_profile = None
@@ -112,7 +118,7 @@ if uploaded:
             "BS Rows": len(info.get("bs_rows", [])),
             "Error": info.get("error", ""),
         })
-    st.dataframe(rows, use_container_width=True, hide_index=True)
+    st.dataframe(rows, width="stretch", hide_index=True)
 
 
 st.divider()
@@ -218,7 +224,7 @@ if st.session_state.get("target_bytes"):
                         "Sheet": sn, "Type": "OTHER",
                         "Year": "—", "Entity Cols": "—", "Data Rows": "—",
                     })
-            st.dataframe(pd.DataFrame(info_rows), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(info_rows), width="stretch", hide_index=True)
 
         # ── b) Entity → QB Company Mapping ────────────────────────────────
         selected_ys = [classified[sn] for sn in selected_sheets if sn in classified]
@@ -296,7 +302,7 @@ if st.session_state.get("target_bytes"):
                     save_col, info_col = st.columns([2, 5])
                     with save_col:
                         save_cfg_btn = st.button(
-                            "💾 Save Configuration", type="primary", use_container_width=True,
+                            "💾 Save Configuration", type="primary", width="stretch",
                             key="p1_save_config_btn"
                         )
                     with info_col:
@@ -355,7 +361,7 @@ if st.session_state.get("target_bytes"):
                                     st.write("")
                                     st.write("")
                                     if st.button("Create & retry", key="p1_save_gate_create_btn",
-                                                 use_container_width=True):
+                                                 width="stretch"):
                                         if qp_name.strip():
                                             nid = P.create_profile(qp_name.strip())
                                             st.session_state.active_profile_id = str(nid)

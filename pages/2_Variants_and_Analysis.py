@@ -292,7 +292,7 @@ if _target_bytes and _selected_sheets and _year_sheets_meta:
                 df_overrides = pd.DataFrame(override_rows)
                 edited_overrides = st.data_editor(
                     df_overrides,
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True,
                     num_rows="fixed",
                     column_config={
@@ -315,7 +315,7 @@ if _target_bytes and _selected_sheets and _year_sheets_meta:
                 # Save button
                 ro_save_col, _ = st.columns([2, 5])
                 with ro_save_col:
-                    if st.button("💾 Apply Row Overrides", type="primary", use_container_width=True, key="v2_row_override_save"):
+                    if st.button("💾 Apply Row Overrides", type="primary", width="stretch", key="v2_row_override_save"):
                         new_ro = dict(st.session_state.get("row_pivot_overrides", {}))
                         for _, r in edited_overrides.iterrows():
                             rk = r["row_key"]
@@ -366,7 +366,7 @@ if _target_bytes and _selected_sheets and _year_sheets_meta:
                         c1, c2, c3 = st.columns([1.5, 1.5, 1])
                         with c1:
                             if db_online:
-                                if st.button("💾 Save & Apply", type="primary", use_container_width=True, key="v2_ro_save_confirm"):
+                                if st.button("💾 Save & Apply", type="primary", width="stretch", key="v2_ro_save_confirm"):
                                     tid = ""
                                     tname = ""
                                     if sel_id == CREATE_NEW:
@@ -408,9 +408,9 @@ if _target_bytes and _selected_sheets and _year_sheets_meta:
                                     st.success(f"✅ Row-level pivot overrides saved to profile **{tname}**.")
                                     st.rerun()
                             else:
-                                st.button("💾 Save & Apply", type="primary", use_container_width=True, disabled=True, key="v2_ro_save_confirm_disabled")
+                                st.button("💾 Save & Apply", type="primary", width="stretch", disabled=True, key="v2_ro_save_confirm_disabled")
                         with c2:
-                            if st.button("💻 Apply to Session Only", use_container_width=True, key="v2_ro_apply_session"):
+                            if st.button("💻 Apply to Session Only", width="stretch", key="v2_ro_apply_session"):
                                 st.session_state.row_pivot_overrides = st.session_state.pending_row_overrides
                                 st.session_state.v2_save_ro_dialog_open = False
                                 st.session_state.v2_ro_expander_expanded = False
@@ -418,7 +418,7 @@ if _target_bytes and _selected_sheets and _year_sheets_meta:
                                 st.success("✅ Row-level pivot overrides applied to session only.")
                                 st.rerun()
                         with c3:
-                            if st.button("❌ Cancel", use_container_width=True, key="v2_ro_cancel"):
+                            if st.button("❌ Cancel", width="stretch", key="v2_ro_cancel"):
                                 st.session_state.v2_save_ro_dialog_open = False
                                 st.session_state.v2_ro_expander_expanded = False
                                 st.session_state.pending_row_overrides = None
@@ -481,7 +481,7 @@ with col1:
         master_buf.getvalue(),
         "00_MASTER_Consolidated.xlsx",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True,
+        width="stretch",
     )
     if _template_sheets_appended:
         st.caption(
@@ -498,7 +498,7 @@ with col2:
         digest_buf.getvalue(),
         "01_CoA_Variants_Digest.xlsx",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True,
+        width="stretch",
     )
 
 
@@ -649,7 +649,7 @@ else:
 
 edited = st.data_editor(
     view,
-    use_container_width=True,
+    width="stretch",
     hide_index=True,
     num_rows="fixed",
     column_order=[
@@ -766,7 +766,7 @@ def _save_rows_to_profile(edited_df, base_overrides, entity_lookup_map, tid=None
 apply_col, apply_hint_col = st.columns([1, 3])
 with apply_col:
     apply_clicked = st.button(
-        "⚡ Apply duplicate / remove", use_container_width=True, key="v2_apply_dup_btn",
+        "⚡ Apply duplicate / remove", width="stretch", key="v2_apply_dup_btn",
     )
 with apply_hint_col:
     st.caption(
@@ -839,7 +839,7 @@ qs_col, qs_hint_col = st.columns([1, 3])
 _active_id_for_qs = st.session_state.get("active_profile_id")
 with qs_col:
     quick_save_clicked = st.button(
-        "⚡ Quick Save (active profile)", type="primary", use_container_width=True,
+        "⚡ Quick Save (active profile)", type="primary", width="stretch",
         key="v2_quick_save_btn", disabled=not (db_online and _active_id_for_qs),
     )
 with qs_hint_col:
@@ -920,7 +920,7 @@ with exp_col1:
         _cached_mapping_excel(_rows_hash(edited), edited),
         "mapping_table.xlsx",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True,
+        width="stretch",
         key="v2_export_excel_btn",
     )
 
@@ -963,7 +963,7 @@ if "v2_save_dialog_open" not in st.session_state:
 save_col, hint_col = st.columns([1, 3])
 with save_col:
     if st.button("💾 Save Mappings", type="primary",
-                 use_container_width=True, key="v2_save_btn"):
+                 width="stretch", key="v2_save_btn"):
         st.session_state.v2_save_dialog_open = True
 with hint_col:
     if db_online:
@@ -982,7 +982,7 @@ if st.session_state.get("v2_save_dialog_open"):
             oc1, oc2 = st.columns([1, 1])
             with oc1:
                 if st.button("✅ Save to session", type="primary",
-                             use_container_width=True, key="v2_sess_confirm"):
+                             width="stretch", key="v2_sess_confirm"):
                     new_ov, n, _errs = _save_rows_to_profile(
                         edited, entity_session_overrides, entity_lookup, tid=None,
                     )
@@ -991,7 +991,7 @@ if st.session_state.get("v2_save_dialog_open"):
                     st.success(f"✅ Saved {n} overrides to session.")
                     st.rerun()
             with oc2:
-                if st.button("❌ Cancel", use_container_width=True, key="v2_sess_cancel"):
+                if st.button("❌ Cancel", width="stretch", key="v2_sess_cancel"):
                     st.session_state.v2_save_dialog_open = False
                     st.rerun()
         else:
@@ -1022,9 +1022,9 @@ if st.session_state.get("v2_save_dialog_open"):
             bc1, bc2 = st.columns([1, 1])
             with bc1:
                 confirm = st.button("✅ Confirm Save", type="primary",
-                                    use_container_width=True, key="v2_confirm")
+                                    width="stretch", key="v2_confirm")
             with bc2:
-                if st.button("❌ Cancel", use_container_width=True, key="v2_cancel"):
+                if st.button("❌ Cancel", width="stretch", key="v2_cancel"):
                     st.session_state.v2_save_dialog_open = False
                     st.rerun()
 
