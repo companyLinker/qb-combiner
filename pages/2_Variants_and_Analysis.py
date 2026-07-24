@@ -12,6 +12,8 @@ import uuid
 import streamlit as st
 import openpyxl
 import pandas as pd
+from openpyxl.worksheet.datavalidation import DataValidation
+from openpyxl.utils import get_column_letter
 
 from lib.master_builder import build_master_workbook, build_variants_digest, copy_sheet_into_workbook
 from lib.linked_builder import build_linked_workbook
@@ -888,17 +890,66 @@ _EXPORT_COLUMNS = [
 
 
 @st.cache_data(show_spinner=False, max_entries=4)
-def _cached_mapping_excel(rows_hash: str, _export_df: pd.DataFrame) -> bytes:
-    """Write the mapping table to an .xlsx as plain values — no styling/formula
-    overhead — so it stays fast even for large tables. Cached by content hash
-    so unrelated reruns (e.g. a filter chip click elsewhere) don't pay to
-    regenerate the file."""
+def _cached_mapping_excel(rows_hash: str, targets_hash: str,
+                           _export_df: pd.DataFrame,
+                           _pnl_targets: list, _bs_targets: list) -> bytes:
+    """Write the mapping table to an .xlsx as plain values, with real Excel
+    dropdowns so bulk-editing offline matches the in-app experience instead of
+    requiring the whole Target Line to be typed out by hand:
+      - Target Line: P&L rows get only P&L template lines as options, BS rows
+        get only BS lines (via two per-row-scoped data validations).
+      - Formula Override: the same fixed pivot-tab list for every row.
+    Cached by content hash so unrelated reruns (e.g. a filter chip click
+    elsewhere) don't pay to regenerate the file.
+    """
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Mapping"
     ws.append(_EXPORT_COLUMNS)
     for row in _export_df[_EXPORT_COLUMNS].itertuples(index=False, name=None):
         ws.append(list(row))
+    n_rows = len(_export_df)
+
+    # Hidden helper sheet holding the option lists — Excel's "list" data
+    # validation needs a cell range for anything longer than a short inline set.
+    pnl_opts = [""] + sorted({t for t in _pnl_targets if t})
+    bs_opts  = [""] + sorted({t for t in _bs_targets if t})
+    lists_ws = wb.create_sheet("Lists")
+    lists_ws.sheet_state = "hidden"
+    for i, v in enumerate(pnl_opts, start=1):
+        lists_ws.cell(row=i, column=1, value=v)
+    for i, v in enumerate(bs_opts, start=1):
+        lists_ws.cell(row=i, column=2, value=v)
+    for i, v in enumerate(PIVOT_OVERRIDE_OPTIONS, start=1):
+        lists_ws.cell(row=i, column=3, value=v)
+
+    target_col  = get_column_letter(_EXPORT_COLUMNS.index("Target Line") + 1)
+    formula_col = get_column_letter(_EXPORT_COLUMNS.index("Formula Override") + 1)
+
+    # Formula Override options are the same for every row — one range covers all.
+    dv_formula = DataValidation(
+        type="list", formula1=f"=Lists!$C$1:$C${len(PIVOT_OVERRIDE_OPTIONS)}", allow_blank=True,
+    )
+    ws.add_data_validation(dv_formula)
+    if n_rows:
+        dv_formula.add(f"{formula_col}2:{formula_col}{n_rows + 1}")
+
+    # Target Line options depend on each row's Statement, so build them per row.
+    dv_pnl = DataValidation(type="list", formula1=f"=Lists!$A$1:$A${len(pnl_opts)}", allow_blank=True) \
+        if len(pnl_opts) > 1 else None
+    dv_bs = DataValidation(type="list", formula1=f"=Lists!$B$1:$B${len(bs_opts)}", allow_blank=True) \
+        if len(bs_opts) > 1 else None
+    if dv_pnl is not None:
+        ws.add_data_validation(dv_pnl)
+    if dv_bs is not None:
+        ws.add_data_validation(dv_bs)
+
+    for i, stmt in enumerate(_export_df["Statement"], start=2):
+        if stmt == "P&L" and dv_pnl is not None:
+            dv_pnl.add(f"{target_col}{i}")
+        elif stmt == "BS" and dv_bs is not None:
+            dv_bs.add(f"{target_col}{i}")
+
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
@@ -913,11 +964,20 @@ def _rows_hash(export_df: pd.DataFrame) -> str:
     ).hexdigest()
 
 
+def _targets_hash(pnl_targets: list, bs_targets: list) -> str:
+    return hashlib.md5(
+        ("|".join(sorted(pnl_targets)) + "##" + "|".join(sorted(bs_targets))).encode()
+    ).hexdigest()
+
+
 exp_col1, exp_col2 = st.columns([1, 3])
 with exp_col1:
     st.download_button(
         "⬇ Download Excel",
-        _cached_mapping_excel(_rows_hash(edited), edited),
+        _cached_mapping_excel(
+            _rows_hash(edited), _targets_hash(target_lines_pnl, target_lines_bs),
+            edited, target_lines_pnl, target_lines_bs,
+        ),
         "mapping_table.xlsx",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         width="stretch",
