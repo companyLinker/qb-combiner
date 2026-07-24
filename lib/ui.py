@@ -1,4 +1,64 @@
+import hashlib
+
+import pandas as pd
 import streamlit as st
+
+
+# The 4 linear steps of the main wizard flow (Profiles and Template Inspector
+# are non-linear utility pages and don't appear here).
+STEPS = [
+    (1, "📂", "Upload Files", "pages/1_Upload_Files.py"),
+    (2, "📊", "Variants & Analysis", "pages/2_Variants_and_Analysis.py"),
+    (3, "🔗", "Review Mapping", "pages/3_Review_Mapping.py"),
+    (4, "💾", "Generate Workbook", "pages/4_Generate_Linked_Workbook.py"),
+]
+
+
+def render_step_header(current: int):
+    """Show all 4 wizard steps at once: done steps in solid green, the
+    current step boxed, upcoming steps muted. Pure native components (no
+    custom CSS) so it can't fight Streamlit's own DOM across versions."""
+    cols = st.columns(len(STEPS))
+    for col, (num, icon, label, _path) in zip(cols, STEPS):
+        with col:
+            if num < current:
+                st.success(f"✅ {num}. {label}")
+            elif num == current:
+                with st.container(border=True):
+                    st.markdown(f"**{icon} {num}. {label}**")
+            else:
+                st.caption(f"{num}. {label}")
+
+
+def render_next_step(ready: bool, target_page: str, label: str, not_ready_msg: str):
+    """A strong, high-contrast 'you're good to go' cue plus an actual
+    navigation button when ready — instead of a permanently pale st.info
+    hint that looks the same whether or not the user has anything to do."""
+    st.divider()
+    if ready:
+        st.success("✅ This step looks good.")
+        if st.button(f"➡️ Continue to {label}", type="primary", width="stretch"):
+            st.switch_page(target_page)
+    else:
+        st.info(not_ready_msg)
+
+
+def rows_hash(df: pd.DataFrame, columns: list) -> str:
+    """Fast vectorized row hash (pandas' own C-accelerated hasher) over just
+    the given columns — used to detect whether an editable table has any
+    unsaved changes."""
+    return hashlib.md5(
+        pd.util.hash_pandas_object(df[columns], index=False).values.tobytes()
+    ).hexdigest()
+
+
+def is_dirty(current_df: pd.DataFrame, baseline_df: pd.DataFrame, columns: list) -> bool:
+    """True if current_df differs from baseline_df over the given columns.
+    Pass the pre-edit dataframe handed to st.data_editor(...) as the
+    baseline — it's rebuilt fresh from saved state every run, so it already
+    represents "last saved," no separate snapshot needs to be tracked."""
+    return rows_hash(current_df, columns) != rows_hash(baseline_df, columns)
+
 
 def hide_streamlit_elements():
     """Injects custom CSS to hide the Streamlit main menu, footer, deployment/fork buttons, 

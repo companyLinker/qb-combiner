@@ -21,7 +21,7 @@ from lib.mapping_rules import map_pnl, map_bs
 from lib.template_discovery import discover_template
 from lib import db as dblib
 from lib import profiles as P
-from lib.ui import hide_streamlit_elements
+from lib.ui import hide_streamlit_elements, render_step_header, render_next_step, rows_hash, is_dirty
 
 
 # Options shared by the Template Row Formula Overrides section and the
@@ -112,6 +112,7 @@ def _cached_linked_workbook(qb_data_hash: str, target_hash: str,
 hide_streamlit_elements()
 
 st.title("📊 Step 2 — Variants & Analysis")
+render_step_header(2)
 
 if "qb_data" not in st.session_state:
     st.warning("Upload files first on **📂 Upload Files**.")
@@ -315,9 +316,14 @@ if _target_bytes and _selected_sheets and _year_sheets_meta:
                 )
                 
                 # Save button
-                ro_save_col, _ = st.columns([2, 5])
+                ro_dirty = is_dirty(edited_overrides, df_overrides, ["Override Pivot Tab"])
+                ro_save_col, ro_hint_col = st.columns([2, 5])
+                with ro_hint_col:
+                    st.write("")
+                    st.caption("✅ All changes saved" if not ro_dirty else "🟡 You have unsaved changes")
                 with ro_save_col:
-                    if st.button("💾 Apply Row Overrides", type="primary", width="stretch", key="v2_row_override_save"):
+                    if st.button("💾 Apply Row Overrides", type="primary", width="stretch",
+                                 key="v2_row_override_save", disabled=not ro_dirty):
                         new_ro = dict(st.session_state.get("row_pivot_overrides", {}))
                         for _, r in edited_overrides.iterrows():
                             rk = r["row_key"]
@@ -765,14 +771,17 @@ def _save_rows_to_profile(edited_df, base_overrides, entity_lookup_map, tid=None
 
 
 # ── Apply duplicate / remove — inline, immediate, no profile dialog ──────────
+_apply_dirty = is_dirty(edited, view, ["Target Line", "Formula Override", "Duplicate?", "Remove?"])
 apply_col, apply_hint_col = st.columns([1, 3])
 with apply_col:
     apply_clicked = st.button(
         "⚡ Apply duplicate / remove", width="stretch", key="v2_apply_dup_btn",
+        disabled=not _apply_dirty,
     )
 with apply_hint_col:
     st.caption(
-        "Applies immediately to this session (and deletes any checked "
+        ("🟡 You have unsaved changes — " if _apply_dirty else "✅ Nothing to apply — ") +
+        "applies immediately to this session (and deletes any checked "
         "duplicate from the profile right away). Whatever Target Line / "
         "Formula Override you've already typed above is kept — you still "
         "need **💾 Save Mappings** below to persist everything to the profile."
@@ -839,22 +848,22 @@ if apply_clicked:
 st.divider()
 qs_col, qs_hint_col = st.columns([1, 3])
 _active_id_for_qs = st.session_state.get("active_profile_id")
+_qs_dirty = is_dirty(edited, view, ["Target Line", "Formula Override"])
 with qs_col:
     quick_save_clicked = st.button(
         "⚡ Quick Save (active profile)", type="primary", width="stretch",
-        key="v2_quick_save_btn", disabled=not (db_online and _active_id_for_qs),
+        key="v2_quick_save_btn", disabled=not (db_online and _active_id_for_qs and _qs_dirty),
     )
 with qs_hint_col:
-    if db_online and _active_id_for_qs:
+    if not (db_online and _active_id_for_qs):
         st.caption(
-            f"Saves every Target Line / Formula Override above straight to profile "
-            f"**{active_profile['name'] if active_profile else _active_id_for_qs}** — "
-            "immediately, no profile picker. Use 💾 Save Mappings below instead if "
-            "you want to switch or create a profile."
+            "Pick or create a profile first (💾 Save Mappings below) to enable Quick Save."
         )
     else:
         st.caption(
-            "Pick or create a profile first (💾 Save Mappings below) to enable Quick Save."
+            ("🟡 Unsaved Target Line / Formula Override changes — " if _qs_dirty else "✅ All changes saved — ") +
+            f"saves straight to profile **{active_profile['name'] if active_profile else _active_id_for_qs}**, "
+            "no profile picker. Use 💾 Save Mappings below instead if you want to switch or create a profile."
         )
 
 if quick_save_clicked:
@@ -1020,6 +1029,7 @@ st.divider()
 if "v2_save_dialog_open" not in st.session_state:
     st.session_state.v2_save_dialog_open = False
 
+_save_mappings_dirty = is_dirty(edited, view, ["Target Line", "Formula Override"])
 save_col, hint_col = st.columns([1, 3])
 with save_col:
     if st.button("💾 Save Mappings", type="primary",
@@ -1027,7 +1037,11 @@ with save_col:
         st.session_state.v2_save_dialog_open = True
 with hint_col:
     if db_online:
-        st.caption("You will be asked **which profile** to save to every time.")
+        st.caption(
+            ("🟡 You have unsaved changes. " if _save_mappings_dirty else "✅ Matches the active profile. ") +
+            "You will be asked **which profile** to save to every time — "
+            "use this to also copy the current mappings into a different profile."
+        )
     else:
         st.warning("MongoDB offline — mappings saved to session only.")
 
@@ -1148,8 +1162,9 @@ if st.session_state.get("v2_save_dialog_open"):
                     st.success(f"✅ Saved {n} per-company mappings and template row formula overrides to profile **{tname}**.")
                 st.rerun()
 
-st.divider()
-if template_loaded:
-    st.info("👉 Next: **💾 Generate Linked Workbook**.")
-else:
-    st.warning("Upload a target template on **📂 Upload Files** before generating.")
+render_next_step(
+    ready=template_loaded,
+    target_page="pages/3_Review_Mapping.py",
+    label="Step 3: Review Mapping",
+    not_ready_msg="Upload a target template on **📂 Upload Files** before continuing.",
+)

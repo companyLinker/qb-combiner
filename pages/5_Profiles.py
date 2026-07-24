@@ -31,24 +31,21 @@ if not dblib.is_connected():
 with st.expander("➕ Create a new profile", expanded=False):
     new_name = st.text_input("Profile name", placeholder="e.g., AP NE 2025 Tax")
     new_desc = st.text_input("Description (optional)", placeholder="e.g., 22 chicken LLCs, fiscal year 2025")
-    if st.button("Create profile", type="primary"):
-        if not new_name.strip():
-            st.error("Profile name is required.")
+    if st.button("Create profile", type="primary", disabled=not new_name.strip()):
+        existing = P.get_profile_by_name(new_name.strip())
+        if existing:
+            st.error(f"A profile named '{new_name.strip()}' already exists.")
         else:
-            existing = P.get_profile_by_name(new_name.strip())
-            if existing:
-                st.error(f"A profile named '{new_name.strip()}' already exists.")
-            else:
-                user_email = ""  # placeholder — wire up to real user when auth lands
-                pid = P.create_profile(
-                    name=new_name.strip(),
-                    description=new_desc.strip(),
-                    target_template_name=st.session_state.get("target_filename", ""),
-                    created_by=user_email,
-                )
-                st.success(f"Created '{new_name.strip()}'.")
-                st.session_state.active_profile_id = pid
-                st.rerun()
+            user_email = ""  # placeholder — wire up to real user when auth lands
+            pid = P.create_profile(
+                name=new_name.strip(),
+                description=new_desc.strip(),
+                target_template_name=st.session_state.get("target_filename", ""),
+                created_by=user_email,
+            )
+            st.success(f"Created '{new_name.strip()}'.")
+            st.session_state.active_profile_id = pid
+            st.rerun()
 
 
 # --- Active profile selector ---
@@ -102,7 +99,8 @@ if active.get("description"):
 # --- Rename / Export / Delete ---
 with st.expander("🔧 Manage this profile", expanded=False):
     new_label = st.text_input("Rename to", value=active["name"], key=f"rename_{chosen_id}")
-    if st.button("Save name") and new_label.strip() and new_label.strip() != active["name"]:
+    _name_unchanged = not new_label.strip() or new_label.strip() == active["name"]
+    if st.button("Save name", disabled=_name_unchanged):
         P.rename_profile(chosen_id, new_label.strip())
         st.success("Renamed.")
         st.rerun()

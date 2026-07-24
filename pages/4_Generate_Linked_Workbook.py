@@ -5,12 +5,13 @@ import pandas as pd
 from lib.linked_builder import build_linked_workbook, HAVE_RAPIDFUZZ
 from lib import profiles as P
 from lib import db as dblib
-from lib.ui import hide_streamlit_elements
+from lib.ui import hide_streamlit_elements, render_step_header
 
 
 hide_streamlit_elements()
 
 st.title("💾 Step 4 — Generate Linked Workbook")
+render_step_header(4)
 
 if "qb_data" not in st.session_state:
     st.warning("Upload files first on **📂 Upload Files**.")
@@ -160,6 +161,7 @@ if st.button("🚀 Generate Linked Workbook", type="primary"):
 
 # ── Download ─────────────────────────────────────────────────────────────────
 if "linked_buf" in st.session_state:
+    st.success("✅ Workbook ready — download below.")
     st.download_button(
         "⬇ Download Linked Combination Workbook",
         st.session_state.linked_buf,

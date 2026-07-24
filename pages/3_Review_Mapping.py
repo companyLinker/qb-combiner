@@ -13,7 +13,7 @@ from lib.mapping_rules import map_pnl, map_bs
 from lib.template_discovery import discover_template
 from lib import profiles as P
 from lib import db as dblib
-from lib.ui import hide_streamlit_elements
+from lib.ui import hide_streamlit_elements, render_step_header, render_next_step, is_dirty
 
 
 @st.cache_data(show_spinner=False, max_entries=4)
@@ -45,6 +45,7 @@ def _cached_template_lines_p3(target_bytes_hash: str, _target_bytes: bytes):
 hide_streamlit_elements()
 
 st.title("🔗 Step 3 — Review & Override Mappings")
+render_step_header(3)
 
 if "qb_data" not in st.session_state:
     st.warning("👈 Upload files first on **📂 Upload Files**.")
@@ -255,6 +256,7 @@ st.divider()
 if "p3_save_dialog_open" not in st.session_state:
     st.session_state.p3_save_dialog_open = False
 
+_p3_dirty = is_dirty(edited, view, ["Target Line"])
 save_col, hint_col = st.columns([1, 3])
 with save_col:
     if st.button("💾 Save Overrides", type="primary",
@@ -262,7 +264,10 @@ with save_col:
         st.session_state.p3_save_dialog_open = True
 with hint_col:
     if db_online:
-        st.caption("You will be asked **which profile** to save to every time.")
+        st.caption(
+            ("🟡 You have unsaved changes. " if _p3_dirty else "✅ Matches the active profile. ") +
+            "You will be asked **which profile** to save to every time."
+        )
     else:
         st.warning("MongoDB offline — mappings saved to session only.")
 
@@ -431,7 +436,9 @@ if st.session_state.get("p3_save_dialog_open"):
                 st.success(f"✅ Saved {n} overrides and template row formula overrides to profile **{tname}**.")
                 st.rerun()
 
-if template_loaded:
-    st.info("👉 Next: **💾 Generate Linked Workbook**.")
-else:
-    st.warning("⚠️ No target template uploaded. Go to **📂 Upload Files**.")
+render_next_step(
+    ready=template_loaded,
+    target_page="pages/4_Generate_Linked_Workbook.py",
+    label="Step 4: Generate Linked Workbook",
+    not_ready_msg="⚠️ No target template uploaded. Go to **📂 Upload Files**.",
+)

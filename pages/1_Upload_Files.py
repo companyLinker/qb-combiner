@@ -8,13 +8,14 @@ import openpyxl
 
 from lib.parser import parse_uploaded_files
 from lib.template_discovery import discover_template
-from lib.ui import hide_streamlit_elements
+from lib.ui import hide_streamlit_elements, render_step_header, render_next_step
 from lib import db as dblib
 from lib import profiles as P
 
 hide_streamlit_elements()
 
 st.title("📂 Step 1 — Upload Files")
+render_step_header(1)
 
 # ── Profile selector at the TOP ───────────────────────────────────────────────
 db_online = dblib.is_connected()
@@ -62,14 +63,12 @@ if db_online:
             st.write("")
             st.write("")
             if st.button("Create & activate", key="p1_create_profile_btn",
-                         width="stretch", type="secondary"):
-                if new_profile_name.strip():
-                    new_id = P.create_profile(new_profile_name.strip())
-                    st.session_state.active_profile_id = str(new_id)
-                    st.success(f"✅ Created profile **{new_profile_name.strip()}**.")
-                    st.rerun()
-                else:
-                    st.warning("Enter a name first.")
+                         width="stretch", type="secondary",
+                         disabled=not new_profile_name.strip()):
+                new_id = P.create_profile(new_profile_name.strip())
+                st.session_state.active_profile_id = str(new_id)
+                st.success(f"✅ Created profile **{new_profile_name.strip()}**.")
+                st.rerun()
 else:
     st.warning(f"MongoDB unavailable — session-only mode. ({dblib.connection_error()})")
 
@@ -299,33 +298,35 @@ if st.session_state.get("target_bytes"):
                         new_mapping[tc] = None if chosen == SKIP else chosen
 
                     st.markdown("<br>", unsafe_allow_html=True)
+                    config_dirty = new_mapping != existing_mapping
                     save_col, info_col = st.columns([2, 5])
                     with save_col:
                         save_cfg_btn = st.button(
                             "💾 Save Configuration", type="primary", width="stretch",
-                            key="p1_save_config_btn"
+                            key="p1_save_config_btn", disabled=not config_dirty,
                         )
                     with info_col:
                         n_auto = sum(
                             1 for tc in unique_template_cols
                             if tc not in existing_mapping and _auto_match(tc, qb_entities)
                         )
+                        dirty_note = "🟡 Unsaved changes — " if config_dirty else "✅ All changes saved — "
                         if active_profile:
                             st.caption(
-                                f"{len(unique_template_cols)} unique template columns • "
-                                f"{n_auto} auto-matched • adjust then click Save. "
+                                f"{dirty_note}{len(unique_template_cols)} unique template columns • "
+                                f"{n_auto} auto-matched. "
                                 f"Saving to profile **{active_profile['name']}**."
                             )
                         elif db_online:
                             st.caption(
-                                f"{len(unique_template_cols)} unique template columns • "
+                                f"{dirty_note}{len(unique_template_cols)} unique template columns • "
                                 f"{n_auto} auto-matched • ⚠️ No profile active — "
                                 "select one above to persist."
                             )
                         else:
                             st.caption(
-                                f"{len(unique_template_cols)} unique template columns • "
-                                f"{n_auto} auto-matched • adjust then click Save."
+                                f"{dirty_note}{len(unique_template_cols)} unique template columns • "
+                                f"{n_auto} auto-matched."
                             )
 
                     if save_cfg_btn:
@@ -361,16 +362,13 @@ if st.session_state.get("target_bytes"):
                                     st.write("")
                                     st.write("")
                                     if st.button("Create & retry", key="p1_save_gate_create_btn",
-                                                 width="stretch"):
-                                        if qp_name.strip():
-                                            nid = P.create_profile(qp_name.strip())
-                                            st.session_state.active_profile_id = str(nid)
-                                            st.success(
-                                                f"Created **{qp_name.strip()}**. Click Save again."
-                                            )
-                                            st.rerun()
-                                        else:
-                                            st.warning("Enter a profile name.")
+                                                 width="stretch", disabled=not qp_name.strip()):
+                                        nid = P.create_profile(qp_name.strip())
+                                        st.session_state.active_profile_id = str(nid)
+                                        st.success(
+                                            f"Created **{qp_name.strip()}**. Click Save again."
+                                        )
+                                        st.rerun()
                         else:
                             # ── Save configuration ─────────────────────────
                             st.session_state.template_entity_mapping = new_mapping
@@ -385,6 +383,9 @@ if st.session_state.get("target_bytes"):
 
 
 # Next-step hint
-if st.session_state.get("qb_data"):
-    st.divider()
-    st.info("👉 Next: go to **📊 Variants & Analysis** in the sidebar.")
+render_next_step(
+    ready=bool(st.session_state.get("qb_data")),
+    target_page="pages/2_Variants_and_Analysis.py",
+    label="Step 2: Variants & Analysis",
+    not_ready_msg="Upload at least one QuickBooks export above to continue.",
+)
