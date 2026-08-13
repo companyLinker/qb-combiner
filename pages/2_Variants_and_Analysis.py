@@ -526,6 +526,15 @@ else:
     st.warning("⚠️ Upload a target template on **📂 Upload Files** to enable dropdowns.")
 
 
+# Auto-suggest is active only when a template is uploaded AND the active
+# profile already has saved mappings — suggestions must be grounded in the
+# real template, not the internal rule-engine fallback.
+_autosuggest_active = (
+    template_loaded
+    and bool(saved_lookup or entity_saved_lookup)
+)
+
+
 def make_rows():
     rows = []
     for entity, info in qb_data.items():
@@ -561,9 +570,17 @@ def make_rows():
                     pivot_override  = ""
                     confidence      = "saved"
                 else:
-                    effective       = auto or ""
+                    # Only pre-fill with the auto-rule suggestion when the
+                    # auto-suggest feature is active (template + profile data
+                    # present). Otherwise leave the field blank so users are
+                    # not misled by hardcoded rule-engine guesses.
+                    effective       = (auto or "") if _autosuggest_active else ""
                     pivot_override  = ""
                     confidence      = conf
+
+                # Auto Suggestion column is shown only when auto-suggest is
+                # active; otherwise it is blank.
+                display_auto = (auto or "") if _autosuggest_active else ""
 
                 amt = (r.get("amount_cy") or r.get("amount") or 0)
 
@@ -579,7 +596,7 @@ def make_rows():
                     "Total $":          amt,
                     "abs_total":        abs(amt),
                     "Confidence":       confidence,
-                    "Auto Suggestion":  auto or "",
+                    "Auto Suggestion":  display_auto,
                     "Target Line":      effective,
                     "Formula Override": pivot_override,
                     "Duplicate?":       False,
@@ -599,7 +616,7 @@ def make_rows():
                         "Total $":          amt,
                         "abs_total":        abs(amt),
                         "Confidence":       "duplicate",
-                        "Auto Suggestion":  auto or "",
+                        "Auto Suggestion":  display_auto,
                         "Target Line":      de.get("target_line", ""),
                         "Formula Override": de.get("pivot_override", ""),
                         "Duplicate?":       False,
@@ -646,14 +663,13 @@ if search.strip():
 
 view = view.drop(columns=["abs_total"], errors="ignore")
 
-if target_lines_pnl or target_lines_bs:
+# Target Line dropdown options come ONLY from the uploaded template.
+# When no template is loaded (or auto-suggest is not active), the dropdown
+# offers only the empty option — it never falls back to rule-engine strings.
+if _autosuggest_active and (target_lines_pnl or target_lines_bs):
     all_targets = sorted(set([""] + target_lines_pnl + target_lines_bs))
 else:
-    auto_suggestions = sorted(set(
-        r["Auto Suggestion"] for _, r in df.iterrows()
-        if r.get("Auto Suggestion") and r["Auto Suggestion"] != "__SKIP__"
-    ))
-    all_targets = sorted(set([""] + auto_suggestions))
+    all_targets = [""]
 
 edited = st.data_editor(
     view,
